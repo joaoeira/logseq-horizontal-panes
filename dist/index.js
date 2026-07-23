@@ -17,6 +17,20 @@
   var PANE_SELECTOR = ":scope > .sidebar-item";
   var APP_CONTAINER_SELECTOR = "#app-container";
   var MAIN_CONTAINER_SELECTOR = "#left-container";
+  var BLOCK_SELECTOR = ".ls-block";
+  var EDITOR_SELECTOR = [
+    ".block-editor textarea",
+    "textarea.block-editor",
+    ".editor-inner textarea",
+    ".block-editor input",
+    '.block-editor [contenteditable="true"]',
+    '[contenteditable="true"][role="textbox"]'
+  ].join(", ");
+  var BLOCK_ACTIVATOR_SELECTOR = [
+    ".block-content-inner",
+    ".block-content",
+    ".block-title-wrap"
+  ].join(", ");
   var HorizontalPanesController = class {
     enabled = false;
     options;
@@ -26,6 +40,8 @@
     paneScrollListeners = /* @__PURE__ */ new Set();
     paneOrder = [];
     pendingFocusFrame = null;
+    pendingEditorFrame = null;
+    editorBookmarks = /* @__PURE__ */ new WeakMap();
     constructor(options) {
       this.options = options;
     }
@@ -48,10 +64,20 @@
     isEnabled() {
       return this.enabled;
     }
-    focusMain(behavior = "smooth") {
+    focusMain(behavior = "smooth", restoreEditor = true) {
+      const mainContainer = this.getMainContainer();
+      if (restoreEditor) {
+        this.rememberCurrentEditor();
+        if (mainContainer) {
+          this.releaseEditorOutside(mainContainer);
+        }
+      }
       const appContainer = this.getAppContainer();
       appContainer?.scrollTo({ left: 0, behavior });
       this.clearActivePane();
+      if (restoreEditor && mainContainer && this.enabled) {
+        this.scheduleEditorRestore(mainContainer);
+      }
     }
     focusAdjacentPane(direction) {
       const panes = this.getPanes();
@@ -82,6 +108,7 @@
       }
     }
     moveActivePane(direction) {
+      this.rememberCurrentEditor();
       const panes = this.getPanes();
       const activeIndex = panes.findIndex((pane) => pane.classList.contains(ACTIVE_PANE_CLASS));
       if (activeIndex === -1) return false;
@@ -111,6 +138,8 @@
         passive: false
       });
       this.getDocument().addEventListener("pointerdown", this.handlePointerDown, true);
+      this.getDocument().addEventListener("focusin", this.handleFocusIn, true);
+      this.getDocument().addEventListener("keydown", this.handleKeyDown, true);
       this.ensureSidebarList(false);
       this.sidebarPoll = window.setInterval(() => this.ensureSidebarList(true), 400);
     }
@@ -123,6 +152,8 @@
       document.body.style.removeProperty("--horizontal-panes-main-gap");
       document.removeEventListener("wheel", this.handleWheel, true);
       document.removeEventListener("pointerdown", this.handlePointerDown, true);
+      document.removeEventListener("focusin", this.handleFocusIn, true);
+      document.removeEventListener("keydown", this.handleKeyDown, true);
       if (this.sidebarPoll !== null) {
         window.clearInterval(this.sidebarPoll);
         this.sidebarPoll = null;
@@ -131,8 +162,12 @@
         window.cancelAnimationFrame(this.pendingFocusFrame);
         this.pendingFocusFrame = null;
       }
+      if (this.pendingEditorFrame !== null) {
+        window.cancelAnimationFrame(this.pendingEditorFrame);
+        this.pendingEditorFrame = null;
+      }
       this.disconnectSidebarList();
-      this.focusMain("auto");
+      this.focusMain("auto", false);
     }
     applyCssVariables() {
       if (!this.enabled) return;
@@ -221,6 +256,8 @@
       });
     }
     focusPane(pane) {
+      this.rememberCurrentEditor();
+      this.releaseEditorOutside(pane);
       const appContainer = this.getAppContainer();
       if (!appContainer) return;
       this.markActivePane(pane);
@@ -231,6 +268,7 @@
         this.options.paneGapPx
       );
       appContainer.scrollTo({ left: nextLeft, behavior: "smooth" });
+      this.scheduleEditorRestore(pane);
     }
     markActivePane(pane) {
       this.clearActivePane();
@@ -266,13 +304,159 @@
       const targetElement = target;
       const pane = targetElement.closest(".sidebar-item");
       if (pane && this.sidebarList?.contains(pane)) {
+        this.rememberCurrentEditor();
         this.markActivePane(pane);
         return;
       }
       if (targetElement.closest(MAIN_CONTAINER_SELECTOR)) {
+        this.rememberCurrentEditor();
         this.clearActivePane();
       }
     };
+    handleFocusIn = (event) => {
+      const target = event.target;
+      if (!(target instanceof this.getWindow().Element)) return;
+      const container = this.getEditorContainer(target);
+      if (!container) return;
+      if (container.matches(".sidebar-item")) {
+        this.markActivePane(container);
+      } else {
+        this.clearActivePane();
+      }
+    };
+    handleKeyDown = (event) => {
+      const isApplePlatform = /Mac|iPhone|iPad/.test(this.getWindow().navigator.platform);
+      const modifierPressed = event.metaKey || !isApplePlatform && event.ctrlKey;
+      if (!this.enabled || event.altKey || !modifierPressed) return;
+      const direction = event.code === "BracketLeft" ? -1 : event.code === "BracketRight" ? 1 : null;
+      if (direction === null) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (event.shiftKey) {
+        this.moveActivePane(direction);
+      } else {
+        this.focusAdjacentPane(direction);
+      }
+    };
+    rememberCurrentEditor() {
+      const activeElement = this.getDocument().activeElement;
+      if (!(activeElement instanceof this.getWindow().HTMLElement)) return;
+      if (!activeElement.matches(EDITOR_SELECTOR)) return;
+      const block = activeElement.closest(BLOCK_SELECTOR);
+      const container = this.getEditorContainer(activeElement);
+      if (!block || !container) return;
+      let selectionStart = null;
+      let selectionEnd = null;
+      if (activeElement instanceof this.getWindow().HTMLTextAreaElement || activeElement instanceof this.getWindow().HTMLInputElement) {
+        selectionStart = activeElement.selectionStart;
+        selectionEnd = activeElement.selectionEnd;
+      }
+      this.editorBookmarks.set(container, {
+        block,
+        blockId: this.getBlockId(block),
+        selectionStart,
+        selectionEnd
+      });
+    }
+    releaseEditorOutside(targetContainer) {
+      const activeElement = this.getDocument().activeElement;
+      if (!(activeElement instanceof this.getWindow().HTMLElement)) return;
+      if (!activeElement.matches(EDITOR_SELECTOR)) return;
+      if (targetContainer.contains(activeElement)) return;
+      activeElement.blur();
+    }
+    scheduleEditorRestore(container) {
+      if (this.pendingEditorFrame !== null) {
+        window.cancelAnimationFrame(this.pendingEditorFrame);
+      }
+      this.pendingEditorFrame = window.requestAnimationFrame(() => {
+        this.pendingEditorFrame = null;
+        if (!this.enabled || !container.isConnected) return;
+        this.restoreEditor(container);
+      });
+    }
+    restoreEditor(container) {
+      const bookmark = this.editorBookmarks.get(container);
+      const block = this.resolveBookmarkedBlock(container, bookmark) ?? this.getFirstEditableBlock(container);
+      const editor = this.findEditor(block ?? container);
+      if (editor) {
+        this.focusEditor(editor, bookmark);
+        return;
+      }
+      if (!block) return;
+      this.activateBlock(block);
+      this.focusEditorAfterMount(container, block, bookmark, 4);
+    }
+    focusEditorAfterMount(container, block, bookmark, attemptsRemaining) {
+      if (attemptsRemaining === 0) return;
+      this.pendingEditorFrame = window.requestAnimationFrame(() => {
+        this.pendingEditorFrame = null;
+        if (!this.enabled || !container.isConnected) return;
+        const currentBlock = this.resolveBookmarkedBlock(container, bookmark) ?? block;
+        const editor = this.findEditor(currentBlock);
+        if (editor) {
+          this.focusEditor(editor, bookmark);
+        } else {
+          this.focusEditorAfterMount(container, currentBlock, bookmark, attemptsRemaining - 1);
+        }
+      });
+    }
+    focusEditor(editor, bookmark) {
+      editor.focus({ preventScroll: true });
+      if (editor instanceof this.getWindow().HTMLTextAreaElement || editor instanceof this.getWindow().HTMLInputElement) {
+        const fallbackPosition = editor.value.length;
+        const selectionStart = Math.min(bookmark?.selectionStart ?? fallbackPosition, fallbackPosition);
+        const selectionEnd = Math.min(bookmark?.selectionEnd ?? selectionStart, fallbackPosition);
+        editor.setSelectionRange(selectionStart, selectionEnd);
+        return;
+      }
+      if (editor.isContentEditable) {
+        const selection = this.getWindow().getSelection();
+        const range = this.getDocument().createRange();
+        range.selectNodeContents(editor);
+        range.collapse(false);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+      }
+    }
+    activateBlock(block) {
+      const target = block.querySelector(BLOCK_ACTIVATOR_SELECTOR) ?? block;
+      const HostMouseEvent = this.getWindow().MouseEvent;
+      const eventOptions = {
+        bubbles: true,
+        cancelable: true
+      };
+      target.dispatchEvent(new HostMouseEvent("mousedown", eventOptions));
+      target.dispatchEvent(new HostMouseEvent("mouseup", eventOptions));
+      target.click();
+    }
+    resolveBookmarkedBlock(container, bookmark) {
+      if (!bookmark) return null;
+      if (bookmark.block.isConnected && container.contains(bookmark.block)) {
+        return bookmark.block;
+      }
+      if (!bookmark.blockId) return null;
+      return Array.from(container.querySelectorAll(BLOCK_SELECTOR)).find(
+        (block) => this.getBlockId(block) === bookmark.blockId
+      ) ?? null;
+    }
+    getFirstEditableBlock(container) {
+      return container.querySelector(BLOCK_SELECTOR);
+    }
+    findEditor(container) {
+      if (container.matches(EDITOR_SELECTOR)) return container;
+      return container.querySelector(EDITOR_SELECTOR);
+    }
+    getEditorContainer(element) {
+      const pane = element.closest(".sidebar-item");
+      if (pane && this.sidebarList?.contains(pane)) return pane;
+      const mainContainer = this.getMainContainer();
+      if (mainContainer?.contains(element)) return mainContainer;
+      return null;
+    }
+    getBlockId(block) {
+      return block.getAttribute("blockid") ?? block.getAttribute("data-uuid") ?? block.getAttribute("data-blockid");
+    }
     getPanes() {
       if (!this.sidebarList) return [];
       const currentPanes = new Set(this.getNativePanes());
@@ -290,6 +474,9 @@
     }
     getAppContainer() {
       return this.getDocument().querySelector(APP_CONTAINER_SELECTOR);
+    }
+    getMainContainer() {
+      return this.getDocument().querySelector(MAIN_CONTAINER_SELECTOR);
     }
     getDocument() {
       return parent.document;
@@ -666,32 +853,28 @@
     logseq.App.registerCommandPalette(
       {
         key: "horizontal-panes.focus-next",
-        label: "Horizontal Panes: Focus pane right",
-        keybinding: { binding: "mod+l" }
+        label: "Horizontal Panes: Focus pane right"
       },
       () => controller.focusAdjacentPane(1)
     );
     logseq.App.registerCommandPalette(
       {
         key: "horizontal-panes.focus-previous",
-        label: "Horizontal Panes: Focus pane left",
-        keybinding: { binding: "mod+j" }
+        label: "Horizontal Panes: Focus pane left"
       },
       () => controller.focusAdjacentPane(-1)
     );
     logseq.App.registerCommandPalette(
       {
         key: "horizontal-panes.move-left",
-        label: "Horizontal Panes: Move focused pane left",
-        keybinding: { binding: "mod+shift+j" }
+        label: "Horizontal Panes: Move focused pane left"
       },
       () => controller.moveActivePane(-1)
     );
     logseq.App.registerCommandPalette(
       {
         key: "horizontal-panes.move-right",
-        label: "Horizontal Panes: Move focused pane right",
-        keybinding: { binding: "mod+shift+l" }
+        label: "Horizontal Panes: Move focused pane right"
       },
       () => controller.moveActivePane(1)
     );

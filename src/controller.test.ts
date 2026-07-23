@@ -58,6 +58,13 @@ async function flushMutationAndFrames(): Promise<void> {
   vi.runOnlyPendingTimers();
 }
 
+async function flushEditorFrames(): Promise<void> {
+  await Promise.resolve();
+  for (let frame = 0; frame < 4; frame += 1) {
+    vi.runOnlyPendingTimers();
+  }
+}
+
 describe('HorizontalPanesController', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -181,6 +188,134 @@ describe('HorizontalPanesController', () => {
     expect(oldestPane.style.order).toBe('0');
     expect(middlePane.style.order).toBe('1');
     expect(newestPane.style.order).toBe('2');
+    controller.destroy();
+  });
+
+  it('restores the last caret position when moving between pane editors', async () => {
+    const { list } = installFixture();
+    const main = document.querySelector<HTMLElement>('#left-container')!;
+    main.innerHTML = `
+      <div class="ls-block" blockid="main-block">
+        <div class="block-editor"><textarea>main text</textarea></div>
+      </div>
+    `;
+
+    const pane = document.createElement('div');
+    pane.className = 'sidebar-item';
+    pane.innerHTML = `
+      <div class="ls-block" blockid="pane-block">
+        <div class="block-editor"><textarea>pane text</textarea></div>
+      </div>
+    `;
+    setLeft(pane, 700);
+    list.append(pane);
+
+    const mainEditor = main.querySelector<HTMLTextAreaElement>('textarea')!;
+    const paneEditor = pane.querySelector<HTMLTextAreaElement>('textarea')!;
+    const controller = new HorizontalPanesController(options);
+    controller.setEnabled(true);
+
+    mainEditor.focus();
+    mainEditor.setSelectionRange(2, 4);
+    controller.focusAdjacentPane(1);
+
+    expect(document.activeElement).not.toBe(mainEditor);
+    await flushEditorFrames();
+
+    expect(document.activeElement).toBe(paneEditor);
+    expect(paneEditor.selectionStart).toBe(paneEditor.value.length);
+
+    paneEditor.setSelectionRange(1, 3);
+    controller.focusAdjacentPane(-1);
+
+    expect(document.activeElement).not.toBe(paneEditor);
+    await flushEditorFrames();
+
+    expect(document.activeElement).toBe(mainEditor);
+    expect(mainEditor.selectionStart).toBe(2);
+    expect(mainEditor.selectionEnd).toBe(4);
+    controller.destroy();
+  });
+
+  it('enters the first editable block when a pane has no remembered editor', async () => {
+    const { list } = installFixture();
+    const pane = document.createElement('div');
+    pane.className = 'sidebar-item';
+    pane.innerHTML = `
+      <div class="ls-block" blockid="pane-block">
+        <div class="block-content">Start writing</div>
+      </div>
+    `;
+    setLeft(pane, 700);
+    list.append(pane);
+
+    const block = pane.querySelector<HTMLElement>('.ls-block')!;
+    const content = pane.querySelector<HTMLElement>('.block-content')!;
+    content.addEventListener('click', () => {
+      const editor = document.createElement('textarea');
+      editor.className = 'block-editor';
+      editor.value = 'Start writing';
+      block.append(editor);
+    });
+
+    const controller = new HorizontalPanesController(options);
+    controller.setEnabled(true);
+    controller.focusAdjacentPane(1);
+    await flushEditorFrames();
+
+    expect(document.activeElement).toBe(pane.querySelector('textarea'));
+    controller.destroy();
+  });
+
+  it('consumes the bracket shortcuts before Logseq and uses Shift to reorder', () => {
+    const { list, scrollTo } = installFixture();
+    const newestPane = document.createElement('div');
+    const oldestPane = document.createElement('div');
+    newestPane.className = 'sidebar-item';
+    oldestPane.className = 'sidebar-item';
+    setLeft(oldestPane, 650);
+    setLeft(newestPane, 1350);
+    list.append(newestPane, oldestPane);
+
+    const controller = new HorizontalPanesController(options);
+    controller.setEnabled(true);
+
+    const ordinaryBracket = new KeyboardEvent('keydown', {
+      code: 'BracketRight',
+      key: ']',
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(ordinaryBracket);
+    expect(ordinaryBracket.defaultPrevented).toBe(false);
+    expect(list.querySelector('.horizontal-panes-active-pane')).toBeNull();
+
+    const focusRight = new KeyboardEvent('keydown', {
+      code: 'BracketRight',
+      key: ']',
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(focusRight);
+
+    expect(focusRight.defaultPrevented).toBe(true);
+    expect(scrollTo).toHaveBeenLastCalledWith({ left: 632, behavior: 'smooth' });
+    expect(list.querySelector('.horizontal-panes-active-pane')).toBe(oldestPane);
+
+    const moveRight = new KeyboardEvent('keydown', {
+      code: 'BracketRight',
+      key: '}',
+      metaKey: true,
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    document.dispatchEvent(moveRight);
+
+    expect(moveRight.defaultPrevented).toBe(true);
+    expect(oldestPane.style.order).toBe('1');
+    expect(newestPane.style.order).toBe('0');
     controller.destroy();
   });
 });

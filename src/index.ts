@@ -214,7 +214,6 @@ async function main(): Promise<void> {
     {
       key: 'horizontal-panes.focus-next',
       label: 'Horizontal Panes: Focus pane right',
-      keybinding: { binding: 'mod+l' },
     },
     () => controller.focusAdjacentPane(1)
   );
@@ -222,7 +221,6 @@ async function main(): Promise<void> {
     {
       key: 'horizontal-panes.focus-previous',
       label: 'Horizontal Panes: Focus pane left',
-      keybinding: { binding: 'mod+j' },
     },
     () => controller.focusAdjacentPane(-1)
   );
@@ -230,7 +228,6 @@ async function main(): Promise<void> {
     {
       key: 'horizontal-panes.move-left',
       label: 'Horizontal Panes: Move focused pane left',
-      keybinding: { binding: 'mod+shift+j' },
     },
     () => controller.moveActivePane(-1)
   );
@@ -238,7 +235,6 @@ async function main(): Promise<void> {
     {
       key: 'horizontal-panes.move-right',
       label: 'Horizontal Panes: Move focused pane right',
-      keybinding: { binding: 'mod+shift+l' },
     },
     () => controller.moveActivePane(1)
   );

@@ -35,10 +35,15 @@ run `Horizontal Panes: Toggle mode` from the command palette to switch it off.
 
 - `Horizontal Panes: Open current page as pane`
 - `Horizontal Panes: Focus main page`
-- `Horizontal Panes: Focus pane left` (`Cmd/Ctrl+J`)
-- `Horizontal Panes: Focus pane right` (`Cmd/Ctrl+L`)
-- `Horizontal Panes: Move focused pane left` (`Cmd/Ctrl+Shift+J`)
-- `Horizontal Panes: Move focused pane right` (`Cmd/Ctrl+Shift+L`)
+- `Horizontal Panes: Focus pane left` (`Cmd/Ctrl+[`)
+- `Horizontal Panes: Focus pane right` (`Cmd/Ctrl+]`)
+- `Horizontal Panes: Move focused pane left` (`Cmd/Ctrl+Shift+[`)
+- `Horizontal Panes: Move focused pane right` (`Cmd/Ctrl+Shift+]`)
+
+The focus shortcuts replace Logseq's default Back and Forward shortcuts. They
+also enter edit mode: the plugin remembers the last edited block and caret
+selection in each pane and restores them when returning. A pane that has not
+been edited yet opens its first editable block with the caret at the end.
 
 The main-page width, sidebar-pane width, the gap after the main page, the gap
 between sidebar panes, and optional scroll snapping are independently
@@ -50,7 +55,9 @@ This proof of concept never reorders or reparents Logseq's React-owned DOM
 nodes. Reordering changes the panes' CSS flex order only. The plugin relies on
 native sidebar creation, editing, collapse, and close behaviour. A small
 mutation observer notices newly opened panes, maintains their visual order, and
-scrolls them into view.
+scrolls them into view. Editor restoration activates native block content and
+then focuses Logseq's own mounted editor; it does not create or replace an
+editor.
 
 That keeps the implementation close to the Roam theme and avoids the editor
 state desynchronization caused by treating rendered Logseq elements as an
