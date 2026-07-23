@@ -1,8 +1,10 @@
 export const HORIZONTAL_PANES_STYLES = String.raw`
 @media (min-width: 721px) {
   body.horizontal-panes-active {
+    --horizontal-panes-main-width: 680px;
     --horizontal-panes-pane-width: 680px;
     --horizontal-panes-gap: 18px;
+    --horizontal-panes-main-gap: 18px;
     overflow: hidden !important;
   }
 
@@ -37,10 +39,10 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
   }
 
   body.horizontal-panes-active #left-container {
-    flex: 0 0 var(--horizontal-panes-pane-width) !important;
-    width: var(--horizontal-panes-pane-width) !important;
-    min-width: var(--horizontal-panes-pane-width) !important;
-    max-width: var(--horizontal-panes-pane-width) !important;
+    flex: 0 0 var(--horizontal-panes-main-width) !important;
+    width: var(--horizontal-panes-main-width) !important;
+    min-width: var(--horizontal-panes-main-width) !important;
+    max-width: var(--horizontal-panes-main-width) !important;
     height: 100vh;
     scroll-snap-align: start;
   }
@@ -80,7 +82,7 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
     box-sizing: border-box;
     display: flex !important;
     flex: none !important;
-    flex-flow: row-reverse nowrap !important;
+    flex-flow: row nowrap !important;
     align-items: flex-start !important;
     align-content: flex-start !important;
     gap: var(--horizontal-panes-gap) !important;
@@ -88,7 +90,7 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
     min-width: max-content !important;
     height: 100vh !important;
     margin: 0 !important;
-    padding: 18px 48px 28px var(--horizontal-panes-gap) !important;
+    padding: 18px 48px 28px var(--horizontal-panes-main-gap) !important;
     overflow: visible !important;
     background: var(--ls-primary-background-color) !important;
   }

@@ -24,6 +24,7 @@
     sidebarObserver = null;
     sidebarPoll = null;
     paneScrollListeners = /* @__PURE__ */ new Set();
+    paneOrder = [];
     pendingFocusFrame = null;
     constructor(options) {
       this.options = options;
@@ -80,6 +81,22 @@
         this.focusPane(nextPane);
       }
     }
+    moveActivePane(direction) {
+      const panes = this.getPanes();
+      const activeIndex = panes.findIndex((pane) => pane.classList.contains(ACTIVE_PANE_CLASS));
+      if (activeIndex === -1) return false;
+      const targetIndex = activeIndex + direction;
+      if (targetIndex < 0 || targetIndex >= panes.length) return false;
+      const activePane = panes[activeIndex];
+      const targetPane = panes[targetIndex];
+      if (!activePane || !targetPane) return false;
+      panes[activeIndex] = targetPane;
+      panes[targetIndex] = activePane;
+      this.paneOrder = panes;
+      this.applyPaneOrder();
+      this.scheduleFocus(activePane);
+      return true;
+    }
     destroy() {
       this.enabled = false;
       this.deactivate();
@@ -100,8 +117,10 @@
     deactivate() {
       const document = this.getDocument();
       document.body.classList.remove(BODY_CLASS, SNAP_CLASS);
+      document.body.style.removeProperty("--horizontal-panes-main-width");
       document.body.style.removeProperty("--horizontal-panes-pane-width");
       document.body.style.removeProperty("--horizontal-panes-gap");
+      document.body.style.removeProperty("--horizontal-panes-main-gap");
       document.removeEventListener("wheel", this.handleWheel, true);
       document.removeEventListener("pointerdown", this.handlePointerDown, true);
       if (this.sidebarPoll !== null) {
@@ -118,8 +137,10 @@
     applyCssVariables() {
       if (!this.enabled) return;
       const body = this.getDocument().body;
+      body.style.setProperty("--horizontal-panes-main-width", `${this.options.mainWidthPx}px`);
       body.style.setProperty("--horizontal-panes-pane-width", `${this.options.paneWidthPx}px`);
       body.style.setProperty("--horizontal-panes-gap", `${this.options.paneGapPx}px`);
+      body.style.setProperty("--horizontal-panes-main-gap", `${this.options.mainPaneGapPx}px`);
       body.classList.toggle(SNAP_CLASS, this.options.scrollSnap);
     }
     ensureSidebarList(focusNewestWhenAttached) {
@@ -130,6 +151,8 @@
       this.sidebarList = nextList;
       this.sidebarObserver = new MutationObserver(this.handleSidebarMutations);
       this.sidebarObserver.observe(nextList, { childList: true });
+      this.paneOrder = this.getNativePanes().reverse();
+      this.applyPaneOrder();
       this.getPanes().forEach((pane) => this.attachPaneScrollListener(pane));
       if (focusNewestWhenAttached) {
         const panes = this.getPanes();
@@ -145,24 +168,41 @@
       this.paneScrollListeners.forEach((pane) => {
         pane.removeEventListener("scroll", this.handlePaneScroll);
         pane.classList.remove(ACTIVE_PANE_CLASS);
+        pane.style.removeProperty("order");
       });
       this.paneScrollListeners.clear();
+      this.paneOrder = [];
       this.sidebarList = null;
     }
     handleSidebarMutations = (mutations) => {
-      const addedPanes = [];
+      const addedPanes = /* @__PURE__ */ new Set();
       for (const mutation of mutations) {
         for (const node of mutation.addedNodes) {
           if (!(node instanceof this.getWindow().Element)) continue;
           const element = node;
           if (element.matches(".sidebar-item")) {
-            addedPanes.push(element);
+            addedPanes.add(element);
           }
-          element.querySelectorAll(".sidebar-item").forEach((pane) => addedPanes.push(pane));
+          element.querySelectorAll(".sidebar-item").forEach((pane) => addedPanes.add(pane));
         }
       }
-      addedPanes.forEach((pane) => this.attachPaneScrollListener(pane));
-      const newestPane = addedPanes.at(-1);
+      const nativePanes = this.getNativePanes();
+      const currentPanes = new Set(nativePanes);
+      this.paneScrollListeners.forEach((pane) => {
+        if (currentPanes.has(pane)) return;
+        pane.removeEventListener("scroll", this.handlePaneScroll);
+        pane.classList.remove(ACTIVE_PANE_CLASS);
+        pane.style.removeProperty("order");
+        this.paneScrollListeners.delete(pane);
+      });
+      const retainedOrder = this.paneOrder.filter(
+        (pane) => currentPanes.has(pane) && !addedPanes.has(pane)
+      );
+      const appendedOrder = nativePanes.filter((pane) => addedPanes.has(pane) || !retainedOrder.includes(pane)).reverse();
+      this.paneOrder = [...retainedOrder, ...appendedOrder];
+      this.applyPaneOrder();
+      this.paneOrder.forEach((pane) => this.attachPaneScrollListener(pane));
+      const newestPane = nativePanes.find((pane) => addedPanes.has(pane));
       if (newestPane) {
         this.scheduleFocus(newestPane);
       }
@@ -235,7 +275,18 @@
     };
     getPanes() {
       if (!this.sidebarList) return [];
-      return Array.from(this.sidebarList.querySelectorAll(PANE_SELECTOR)).reverse();
+      const currentPanes = new Set(this.getNativePanes());
+      this.paneOrder = this.paneOrder.filter((pane) => currentPanes.has(pane));
+      return [...this.paneOrder];
+    }
+    getNativePanes() {
+      if (!this.sidebarList) return [];
+      return Array.from(this.sidebarList.querySelectorAll(PANE_SELECTOR));
+    }
+    applyPaneOrder() {
+      this.paneOrder.forEach((pane, index) => {
+        pane.style.order = String(index);
+      });
     }
     getAppContainer() {
       return this.getDocument().querySelector(APP_CONTAINER_SELECTOR);
@@ -252,8 +303,10 @@
   var HORIZONTAL_PANES_STYLES = String.raw`
 @media (min-width: 721px) {
   body.horizontal-panes-active {
+    --horizontal-panes-main-width: 680px;
     --horizontal-panes-pane-width: 680px;
     --horizontal-panes-gap: 18px;
+    --horizontal-panes-main-gap: 18px;
     overflow: hidden !important;
   }
 
@@ -288,10 +341,10 @@
   }
 
   body.horizontal-panes-active #left-container {
-    flex: 0 0 var(--horizontal-panes-pane-width) !important;
-    width: var(--horizontal-panes-pane-width) !important;
-    min-width: var(--horizontal-panes-pane-width) !important;
-    max-width: var(--horizontal-panes-pane-width) !important;
+    flex: 0 0 var(--horizontal-panes-main-width) !important;
+    width: var(--horizontal-panes-main-width) !important;
+    min-width: var(--horizontal-panes-main-width) !important;
+    max-width: var(--horizontal-panes-main-width) !important;
     height: 100vh;
     scroll-snap-align: start;
   }
@@ -331,7 +384,7 @@
     box-sizing: border-box;
     display: flex !important;
     flex: none !important;
-    flex-flow: row-reverse nowrap !important;
+    flex-flow: row nowrap !important;
     align-items: flex-start !important;
     align-content: flex-start !important;
     gap: var(--horizontal-panes-gap) !important;
@@ -339,7 +392,7 @@
     min-width: max-content !important;
     height: 100vh !important;
     margin: 0 !important;
-    padding: 18px 48px 28px var(--horizontal-panes-gap) !important;
+    padding: 18px 48px 28px var(--horizontal-panes-main-gap) !important;
     overflow: visible !important;
     background: var(--ls-primary-background-color) !important;
   }
@@ -439,8 +492,10 @@
   // src/index.ts
   var DEFAULT_SETTINGS = {
     enabled: true,
+    mainWidthPx: 680,
     paneWidthPx: 680,
     paneGapPx: 18,
+    mainPaneGapPx: 18,
     scrollSnap: false
   };
   var settingsSchema = [
@@ -452,15 +507,29 @@
       default: DEFAULT_SETTINGS.enabled
     },
     {
+      key: "mainWidthPx",
+      title: "Main page width",
+      description: "Width in pixels of Logseq\u2019s main page.",
+      type: "number",
+      default: DEFAULT_SETTINGS.mainWidthPx
+    },
+    {
       key: "paneWidthPx",
       title: "Pane width",
-      description: "Width in pixels of the main page and every pane in the horizontal strip.",
+      description: "Width in pixels of pages and blocks opened as panes.",
       type: "number",
       default: DEFAULT_SETTINGS.paneWidthPx
     },
     {
+      key: "mainPaneGapPx",
+      title: "Main page to first pane gap",
+      description: "Horizontal space in pixels between the main page and the first pane.",
+      type: "number",
+      default: DEFAULT_SETTINGS.mainPaneGapPx
+    },
+    {
       key: "paneGapPx",
-      title: "Pane gap",
+      title: "Gap between panes",
       description: "Horizontal space in pixels between panes.",
       type: "number",
       default: DEFAULT_SETTINGS.paneGapPx
@@ -480,17 +549,28 @@
   }
   function readSettings() {
     const settings = logseq.settings ?? {};
+    const paneWidthPx = numericSetting(
+      settings.paneWidthPx,
+      DEFAULT_SETTINGS.paneWidthPx,
+      360,
+      1600
+    );
+    const paneGapPx = numericSetting(settings.paneGapPx, DEFAULT_SETTINGS.paneGapPx, 0, 96);
     return {
       enabled: typeof settings.enabled === "boolean" ? settings.enabled : DEFAULT_SETTINGS.enabled,
-      paneWidthPx: numericSetting(settings.paneWidthPx, DEFAULT_SETTINGS.paneWidthPx, 360, 1600),
-      paneGapPx: numericSetting(settings.paneGapPx, DEFAULT_SETTINGS.paneGapPx, 0, 96),
+      mainWidthPx: numericSetting(settings.mainWidthPx, paneWidthPx, 360, 1600),
+      paneWidthPx,
+      paneGapPx,
+      mainPaneGapPx: numericSetting(settings.mainPaneGapPx, paneGapPx, 0, 240),
       scrollSnap: typeof settings.scrollSnap === "boolean" ? settings.scrollSnap : DEFAULT_SETTINGS.scrollSnap
     };
   }
   function controllerOptions(settings) {
     return {
+      mainWidthPx: settings.mainWidthPx,
       paneWidthPx: settings.paneWidthPx,
       paneGapPx: settings.paneGapPx,
+      mainPaneGapPx: settings.mainPaneGapPx,
       scrollSnap: settings.scrollSnap
     };
   }
@@ -539,6 +619,12 @@
       focusHorizontalPanesPrevious() {
         controller.focusAdjacentPane(-1);
       },
+      moveHorizontalPaneLeft() {
+        controller.moveActivePane(-1);
+      },
+      moveHorizontalPaneRight() {
+        controller.moveActivePane(1);
+      },
       async openCurrentPageInHorizontalPane() {
         await openCurrentPageInPane();
       }
@@ -580,18 +666,34 @@
     logseq.App.registerCommandPalette(
       {
         key: "horizontal-panes.focus-next",
-        label: "Horizontal Panes: Focus next pane",
-        keybinding: { binding: "mod+alt+right" }
+        label: "Horizontal Panes: Focus pane right",
+        keybinding: { binding: "mod+l" }
       },
       () => controller.focusAdjacentPane(1)
     );
     logseq.App.registerCommandPalette(
       {
         key: "horizontal-panes.focus-previous",
-        label: "Horizontal Panes: Focus previous pane",
-        keybinding: { binding: "mod+alt+left" }
+        label: "Horizontal Panes: Focus pane left",
+        keybinding: { binding: "mod+j" }
       },
       () => controller.focusAdjacentPane(-1)
+    );
+    logseq.App.registerCommandPalette(
+      {
+        key: "horizontal-panes.move-left",
+        label: "Horizontal Panes: Move focused pane left",
+        keybinding: { binding: "mod+shift+j" }
+      },
+      () => controller.moveActivePane(-1)
+    );
+    logseq.App.registerCommandPalette(
+      {
+        key: "horizontal-panes.move-right",
+        label: "Horizontal Panes: Move focused pane right",
+        keybinding: { binding: "mod+shift+l" }
+      },
+      () => controller.moveActivePane(1)
     );
     logseq.beforeunload(async () => {
       controller.destroy();

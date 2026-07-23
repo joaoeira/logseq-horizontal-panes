@@ -4,8 +4,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { HorizontalPanesController } from './controller';
 
 const options = {
+  mainWidthPx: 620,
   paneWidthPx: 680,
   paneGapPx: 18,
+  mainPaneGapPx: 32,
   scrollSnap: false,
 };
 
@@ -78,8 +80,10 @@ describe('HorizontalPanesController', () => {
     controller.setEnabled(true);
 
     expect(document.body.classList.contains('horizontal-panes-active')).toBe(true);
+    expect(document.body.style.getPropertyValue('--horizontal-panes-main-width')).toBe('620px');
     expect(document.body.style.getPropertyValue('--horizontal-panes-pane-width')).toBe('680px');
     expect(document.body.style.getPropertyValue('--horizontal-panes-gap')).toBe('18px');
+    expect(document.body.style.getPropertyValue('--horizontal-panes-main-gap')).toBe('32px');
     controller.destroy();
   });
 
@@ -120,6 +124,63 @@ describe('HorizontalPanesController', () => {
     );
 
     expect(app.scrollLeft).toBe(120);
+    controller.destroy();
+  });
+
+  it('focuses panes from left to right and treats the main page as the leftmost target', () => {
+    const { list } = installFixture();
+    const newestPane = document.createElement('div');
+    const oldestPane = document.createElement('div');
+    newestPane.className = 'sidebar-item';
+    oldestPane.className = 'sidebar-item';
+    setLeft(oldestPane, 650);
+    setLeft(newestPane, 1350);
+    list.append(newestPane, oldestPane);
+
+    const controller = new HorizontalPanesController(options);
+    controller.setEnabled(true);
+
+    controller.focusAdjacentPane(1);
+    expect(oldestPane.classList.contains('horizontal-panes-active-pane')).toBe(true);
+
+    controller.focusAdjacentPane(1);
+    expect(newestPane.classList.contains('horizontal-panes-active-pane')).toBe(true);
+
+    controller.focusAdjacentPane(-1);
+    expect(oldestPane.classList.contains('horizontal-panes-active-pane')).toBe(true);
+
+    controller.focusAdjacentPane(-1);
+    expect(list.querySelector('.horizontal-panes-active-pane')).toBeNull();
+    controller.destroy();
+  });
+
+  it('reorders the focused pane visually without moving Logseq-owned DOM nodes', () => {
+    const { list } = installFixture();
+    const newestPane = document.createElement('div');
+    const middlePane = document.createElement('div');
+    const oldestPane = document.createElement('div');
+    newestPane.className = 'sidebar-item';
+    middlePane.className = 'sidebar-item';
+    oldestPane.className = 'sidebar-item';
+    list.append(newestPane, middlePane, oldestPane);
+
+    const controller = new HorizontalPanesController(options);
+    controller.setEnabled(true);
+    middlePane.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+
+    expect(controller.moveActivePane(-1)).toBe(true);
+    expect(oldestPane.style.order).toBe('1');
+    expect(middlePane.style.order).toBe('0');
+    expect(newestPane.style.order).toBe('2');
+    expect(Array.from(list.children)).toEqual(
+      expect.arrayContaining([newestPane, middlePane, oldestPane])
+    );
+    expect(list.children[0]).toBe(newestPane);
+
+    expect(controller.moveActivePane(1)).toBe(true);
+    expect(oldestPane.style.order).toBe('0');
+    expect(middlePane.style.order).toBe('1');
+    expect(newestPane.style.order).toBe('2');
     controller.destroy();
   });
 });

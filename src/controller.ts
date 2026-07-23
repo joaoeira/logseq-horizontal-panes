@@ -9,8 +9,10 @@ const APP_CONTAINER_SELECTOR = '#app-container';
 const MAIN_CONTAINER_SELECTOR = '#left-container';
 
 export type HorizontalPanesOptions = {
+  mainWidthPx: number;
   paneWidthPx: number;
   paneGapPx: number;
+  mainPaneGapPx: number;
   scrollSnap: boolean;
 };
 
@@ -21,6 +23,7 @@ export class HorizontalPanesController {
   private sidebarObserver: MutationObserver | null = null;
   private sidebarPoll: number | null = null;
   private paneScrollListeners = new Set<HTMLElement>();
+  private paneOrder: HTMLElement[] = [];
   private pendingFocusFrame: number | null = null;
 
   constructor(options: HorizontalPanesOptions) {
@@ -88,6 +91,27 @@ export class HorizontalPanesController {
     }
   }
 
+  moveActivePane(direction: -1 | 1): boolean {
+    const panes = this.getPanes();
+    const activeIndex = panes.findIndex((pane) => pane.classList.contains(ACTIVE_PANE_CLASS));
+    if (activeIndex === -1) return false;
+
+    const targetIndex = activeIndex + direction;
+    if (targetIndex < 0 || targetIndex >= panes.length) return false;
+
+    const activePane = panes[activeIndex];
+    const targetPane = panes[targetIndex];
+    if (!activePane || !targetPane) return false;
+
+    panes[activeIndex] = targetPane;
+    panes[targetIndex] = activePane;
+    this.paneOrder = panes;
+    this.applyPaneOrder();
+    this.scheduleFocus(activePane);
+
+    return true;
+  }
+
   destroy(): void {
     this.enabled = false;
     this.deactivate();
@@ -112,8 +136,10 @@ export class HorizontalPanesController {
   private deactivate(): void {
     const document = this.getDocument();
     document.body.classList.remove(BODY_CLASS, SNAP_CLASS);
+    document.body.style.removeProperty('--horizontal-panes-main-width');
     document.body.style.removeProperty('--horizontal-panes-pane-width');
     document.body.style.removeProperty('--horizontal-panes-gap');
+    document.body.style.removeProperty('--horizontal-panes-main-gap');
     document.removeEventListener('wheel', this.handleWheel, true);
     document.removeEventListener('pointerdown', this.handlePointerDown, true);
 
@@ -134,8 +160,10 @@ export class HorizontalPanesController {
   private applyCssVariables(): void {
     if (!this.enabled) return;
     const body = this.getDocument().body;
+    body.style.setProperty('--horizontal-panes-main-width', `${this.options.mainWidthPx}px`);
     body.style.setProperty('--horizontal-panes-pane-width', `${this.options.paneWidthPx}px`);
     body.style.setProperty('--horizontal-panes-gap', `${this.options.paneGapPx}px`);
+    body.style.setProperty('--horizontal-panes-main-gap', `${this.options.mainPaneGapPx}px`);
     body.classList.toggle(SNAP_CLASS, this.options.scrollSnap);
   }
 
@@ -149,6 +177,8 @@ export class HorizontalPanesController {
     this.sidebarList = nextList;
     this.sidebarObserver = new MutationObserver(this.handleSidebarMutations);
     this.sidebarObserver.observe(nextList, { childList: true });
+    this.paneOrder = this.getNativePanes().reverse();
+    this.applyPaneOrder();
     this.getPanes().forEach((pane) => this.attachPaneScrollListener(pane));
 
     if (focusNewestWhenAttached) {
@@ -166,29 +196,50 @@ export class HorizontalPanesController {
     this.paneScrollListeners.forEach((pane) => {
       pane.removeEventListener('scroll', this.handlePaneScroll);
       pane.classList.remove(ACTIVE_PANE_CLASS);
+      pane.style.removeProperty('order');
     });
     this.paneScrollListeners.clear();
+    this.paneOrder = [];
     this.sidebarList = null;
   }
 
   private readonly handleSidebarMutations = (mutations: MutationRecord[]): void => {
-    const addedPanes: HTMLElement[] = [];
+    const addedPanes = new Set<HTMLElement>();
 
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
         if (!(node instanceof this.getWindow().Element)) continue;
         const element = node as Element;
         if (element.matches('.sidebar-item')) {
-          addedPanes.push(element as HTMLElement);
+          addedPanes.add(element as HTMLElement);
         }
         element
           .querySelectorAll<HTMLElement>('.sidebar-item')
-          .forEach((pane) => addedPanes.push(pane));
+          .forEach((pane) => addedPanes.add(pane));
       }
     }
 
-    addedPanes.forEach((pane) => this.attachPaneScrollListener(pane));
-    const newestPane = addedPanes.at(-1);
+    const nativePanes = this.getNativePanes();
+    const currentPanes = new Set(nativePanes);
+    this.paneScrollListeners.forEach((pane) => {
+      if (currentPanes.has(pane)) return;
+      pane.removeEventListener('scroll', this.handlePaneScroll);
+      pane.classList.remove(ACTIVE_PANE_CLASS);
+      pane.style.removeProperty('order');
+      this.paneScrollListeners.delete(pane);
+    });
+    const retainedOrder = this.paneOrder.filter(
+      (pane) => currentPanes.has(pane) && !addedPanes.has(pane)
+    );
+    const appendedOrder = nativePanes
+      .filter((pane) => addedPanes.has(pane) || !retainedOrder.includes(pane))
+      .reverse();
+
+    this.paneOrder = [...retainedOrder, ...appendedOrder];
+    this.applyPaneOrder();
+    this.paneOrder.forEach((pane) => this.attachPaneScrollListener(pane));
+
+    const newestPane = nativePanes.find((pane) => addedPanes.has(pane));
     if (newestPane) {
       this.scheduleFocus(newestPane);
     }
@@ -282,7 +333,21 @@ export class HorizontalPanesController {
 
   private getPanes(): HTMLElement[] {
     if (!this.sidebarList) return [];
-    return Array.from(this.sidebarList.querySelectorAll<HTMLElement>(PANE_SELECTOR)).reverse();
+    const currentPanes = new Set(this.getNativePanes());
+    this.paneOrder = this.paneOrder.filter((pane) => currentPanes.has(pane));
+
+    return [...this.paneOrder];
+  }
+
+  private getNativePanes(): HTMLElement[] {
+    if (!this.sidebarList) return [];
+    return Array.from(this.sidebarList.querySelectorAll<HTMLElement>(PANE_SELECTOR));
+  }
+
+  private applyPaneOrder(): void {
+    this.paneOrder.forEach((pane, index) => {
+      pane.style.order = String(index);
+    });
   }
 
   private getAppContainer(): HTMLElement | null {

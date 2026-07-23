@@ -10,15 +10,19 @@ declare const logseq: LSPluginUser;
 
 type PluginSettings = {
   enabled: boolean;
+  mainWidthPx: number;
   paneWidthPx: number;
   paneGapPx: number;
+  mainPaneGapPx: number;
   scrollSnap: boolean;
 };
 
 const DEFAULT_SETTINGS: PluginSettings = {
   enabled: true,
+  mainWidthPx: 680,
   paneWidthPx: 680,
   paneGapPx: 18,
+  mainPaneGapPx: 18,
   scrollSnap: false,
 };
 
@@ -31,15 +35,29 @@ const settingsSchema: SettingSchemaDesc[] = [
     default: DEFAULT_SETTINGS.enabled,
   },
   {
+    key: 'mainWidthPx',
+    title: 'Main page width',
+    description: 'Width in pixels of Logseq’s main page.',
+    type: 'number',
+    default: DEFAULT_SETTINGS.mainWidthPx,
+  },
+  {
     key: 'paneWidthPx',
     title: 'Pane width',
-    description: 'Width in pixels of the main page and every pane in the horizontal strip.',
+    description: 'Width in pixels of pages and blocks opened as panes.',
     type: 'number',
     default: DEFAULT_SETTINGS.paneWidthPx,
   },
   {
+    key: 'mainPaneGapPx',
+    title: 'Main page to first pane gap',
+    description: 'Horizontal space in pixels between the main page and the first pane.',
+    type: 'number',
+    default: DEFAULT_SETTINGS.mainPaneGapPx,
+  },
+  {
     key: 'paneGapPx',
-    title: 'Pane gap',
+    title: 'Gap between panes',
     description: 'Horizontal space in pixels between panes.',
     type: 'number',
     default: DEFAULT_SETTINGS.paneGapPx,
@@ -61,12 +79,21 @@ function numericSetting(value: unknown, fallback: number, minimum: number, maxim
 
 function readSettings(): PluginSettings {
   const settings = (logseq.settings ?? {}) as Partial<PluginSettings>;
+  const paneWidthPx = numericSetting(
+    settings.paneWidthPx,
+    DEFAULT_SETTINGS.paneWidthPx,
+    360,
+    1600
+  );
+  const paneGapPx = numericSetting(settings.paneGapPx, DEFAULT_SETTINGS.paneGapPx, 0, 96);
 
   return {
     enabled:
       typeof settings.enabled === 'boolean' ? settings.enabled : DEFAULT_SETTINGS.enabled,
-    paneWidthPx: numericSetting(settings.paneWidthPx, DEFAULT_SETTINGS.paneWidthPx, 360, 1600),
-    paneGapPx: numericSetting(settings.paneGapPx, DEFAULT_SETTINGS.paneGapPx, 0, 96),
+    mainWidthPx: numericSetting(settings.mainWidthPx, paneWidthPx, 360, 1600),
+    paneWidthPx,
+    paneGapPx,
+    mainPaneGapPx: numericSetting(settings.mainPaneGapPx, paneGapPx, 0, 240),
     scrollSnap:
       typeof settings.scrollSnap === 'boolean'
         ? settings.scrollSnap
@@ -76,8 +103,10 @@ function readSettings(): PluginSettings {
 
 function controllerOptions(settings: PluginSettings): HorizontalPanesOptions {
   return {
+    mainWidthPx: settings.mainWidthPx,
     paneWidthPx: settings.paneWidthPx,
     paneGapPx: settings.paneGapPx,
+    mainPaneGapPx: settings.mainPaneGapPx,
     scrollSnap: settings.scrollSnap,
   };
 }
@@ -135,6 +164,12 @@ async function main(): Promise<void> {
     focusHorizontalPanesPrevious() {
       controller.focusAdjacentPane(-1);
     },
+    moveHorizontalPaneLeft() {
+      controller.moveActivePane(-1);
+    },
+    moveHorizontalPaneRight() {
+      controller.moveActivePane(1);
+    },
     async openCurrentPageInHorizontalPane() {
       await openCurrentPageInPane();
     },
@@ -178,18 +213,34 @@ async function main(): Promise<void> {
   logseq.App.registerCommandPalette(
     {
       key: 'horizontal-panes.focus-next',
-      label: 'Horizontal Panes: Focus next pane',
-      keybinding: { binding: 'mod+alt+right' },
+      label: 'Horizontal Panes: Focus pane right',
+      keybinding: { binding: 'mod+l' },
     },
     () => controller.focusAdjacentPane(1)
   );
   logseq.App.registerCommandPalette(
     {
       key: 'horizontal-panes.focus-previous',
-      label: 'Horizontal Panes: Focus previous pane',
-      keybinding: { binding: 'mod+alt+left' },
+      label: 'Horizontal Panes: Focus pane left',
+      keybinding: { binding: 'mod+j' },
     },
     () => controller.focusAdjacentPane(-1)
+  );
+  logseq.App.registerCommandPalette(
+    {
+      key: 'horizontal-panes.move-left',
+      label: 'Horizontal Panes: Move focused pane left',
+      keybinding: { binding: 'mod+shift+j' },
+    },
+    () => controller.moveActivePane(-1)
+  );
+  logseq.App.registerCommandPalette(
+    {
+      key: 'horizontal-panes.move-right',
+      label: 'Horizontal Panes: Move focused pane right',
+      keybinding: { binding: 'mod+shift+l' },
+    },
+    () => controller.moveActivePane(1)
   );
 
   logseq.beforeunload(async () => {

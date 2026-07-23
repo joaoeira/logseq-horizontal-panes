@@ -7,9 +7,9 @@ Logseq's editor.
 The plugin keeps Logseq's current page as the first fixed-width pane. Pages and
 blocks opened in Logseq's right sidebar become equally sized panes to its right,
 so two or more panes can be visible in the same desktop window. Logseq prepends
-native sidebar items, so the plugin uses the same `row-reverse` technique as
-Azlen's theme to make each new pane appear at the far right. The complete app
-row is the horizontal scroll container.
+native sidebar items; the plugin assigns visual flex order without moving those
+items, making each new pane appear at the far right. The complete app row is the
+horizontal scroll container.
 
 ## Try it
 
@@ -35,18 +35,22 @@ run `Horizontal Panes: Toggle mode` from the command palette to switch it off.
 
 - `Horizontal Panes: Open current page as pane`
 - `Horizontal Panes: Focus main page`
-- `Horizontal Panes: Focus next pane` (`Cmd/Ctrl+Alt+Right`)
-- `Horizontal Panes: Focus previous pane` (`Cmd/Ctrl+Alt+Left`)
+- `Horizontal Panes: Focus pane left` (`Cmd/Ctrl+J`)
+- `Horizontal Panes: Focus pane right` (`Cmd/Ctrl+L`)
+- `Horizontal Panes: Move focused pane left` (`Cmd/Ctrl+Shift+J`)
+- `Horizontal Panes: Move focused pane right` (`Cmd/Ctrl+Shift+L`)
 
-Pane width, pane spacing, and optional scroll snapping are configurable in the
-plugin settings.
+The main-page width, sidebar-pane width, the gap after the main page, the gap
+between sidebar panes, and optional scroll snapping are independently
+configurable in the plugin settings.
 
 ## Deliberate constraints
 
-This proof of concept does not reorder or reparent Logseq's React-owned DOM
-nodes. It relies on native sidebar creation, editing, collapse, and close
-behaviour. A small mutation observer is used only to notice a newly opened
-native pane and scroll it into view.
+This proof of concept never reorders or reparents Logseq's React-owned DOM
+nodes. Reordering changes the panes' CSS flex order only. The plugin relies on
+native sidebar creation, editing, collapse, and close behaviour. A small
+mutation observer notices newly opened panes, maintains their visual order, and
+scrolls them into view.
 
 That keeps the implementation close to the Roam theme and avoids the editor
 state desynchronization caused by treating rendered Logseq elements as an
