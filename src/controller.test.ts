@@ -299,15 +299,17 @@ describe('HorizontalPanesController', () => {
     pane.className = 'sidebar-item';
     pane.innerHTML = `
       <div class="ls-block" blockid="pane-block">
-        <div class="block-content">Start writing</div>
+        <div class="block-content">
+          <span class="block-title-wrap">Start writing</span>
+        </div>
       </div>
     `;
     setLeft(pane, 700);
     list.append(pane);
 
     const block = pane.querySelector<HTMLElement>('.ls-block')!;
-    const content = pane.querySelector<HTMLElement>('.block-content')!;
-    content.addEventListener('click', () => {
+    const title = pane.querySelector<HTMLElement>('.block-title-wrap')!;
+    title.addEventListener('pointerdown', () => {
       const editor = document.createElement('textarea');
       editor.className = 'block-editor';
       editor.value = 'Start writing';

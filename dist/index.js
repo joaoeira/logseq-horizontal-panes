@@ -28,11 +28,11 @@
     '.block-editor [contenteditable="true"]',
     '[contenteditable="true"][role="textbox"]'
   ].join(", ");
-  var BLOCK_ACTIVATOR_SELECTOR = [
+  var BLOCK_ACTIVATOR_SELECTORS = [
+    ".block-title-wrap",
     ".block-content-inner",
-    ".block-content",
-    ".block-title-wrap"
-  ].join(", ");
+    ".block-content"
+  ];
   var HorizontalPanesController = class {
     enabled = false;
     options;
@@ -438,12 +438,42 @@
       }
     }
     activateBlock(block) {
-      const target = block.querySelector(BLOCK_ACTIVATOR_SELECTOR) ?? block;
+      const target = BLOCK_ACTIVATOR_SELECTORS.map(
+        (selector) => block.querySelector(selector)
+      ).find((candidate) => candidate !== null) ?? block;
       const HostMouseEvent = this.getWindow().MouseEvent;
+      const HostPointerEvent = this.getWindow().PointerEvent;
+      const targetRect = target.getBoundingClientRect();
       const eventOptions = {
         bubbles: true,
-        cancelable: true
+        cancelable: true,
+        button: 0,
+        clientX: targetRect.left + Math.min(20, targetRect.width / 2),
+        clientY: targetRect.top + targetRect.height / 2
       };
+      if (typeof HostPointerEvent === "function") {
+        target.dispatchEvent(
+          new HostPointerEvent("pointerdown", {
+            ...eventOptions,
+            buttons: 1,
+            isPrimary: true,
+            pointerId: 1,
+            pointerType: "mouse"
+          })
+        );
+        target.dispatchEvent(
+          new HostPointerEvent("pointerup", {
+            ...eventOptions,
+            buttons: 0,
+            isPrimary: true,
+            pointerId: 1,
+            pointerType: "mouse"
+          })
+        );
+      } else {
+        target.dispatchEvent(new HostMouseEvent("pointerdown", eventOptions));
+        target.dispatchEvent(new HostMouseEvent("pointerup", eventOptions));
+      }
       target.dispatchEvent(new HostMouseEvent("mousedown", eventOptions));
       target.dispatchEvent(new HostMouseEvent("mouseup", eventOptions));
       target.click();
