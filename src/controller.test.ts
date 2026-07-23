@@ -93,6 +93,9 @@ describe('HorizontalPanesController', () => {
     expect(document.body.classList.contains('horizontal-panes-active')).toBe(true);
     expect(document.body.style.getPropertyValue('--horizontal-panes-main-width')).toBe('620px');
     expect(document.body.style.getPropertyValue('--horizontal-panes-pane-width')).toBe('680px');
+    expect(
+      document.body.style.getPropertyValue('--horizontal-panes-last-pane-max-width')
+    ).toBe('850px');
     expect(document.body.style.getPropertyValue('--horizontal-panes-gap')).toBe('18px');
     expect(document.body.style.getPropertyValue('--horizontal-panes-main-gap')).toBe('32px');
     controller.destroy();
@@ -179,6 +182,8 @@ describe('HorizontalPanesController', () => {
     controller.setEnabled(true);
     middlePane.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
 
+    expect(newestPane.classList.contains('horizontal-panes-last-pane')).toBe(true);
+
     expect(controller.moveActivePane(-1)).toBe(true);
     expect(oldestPane.style.order).toBe('1');
     expect(middlePane.style.order).toBe('0');
@@ -192,6 +197,11 @@ describe('HorizontalPanesController', () => {
     expect(oldestPane.style.order).toBe('0');
     expect(middlePane.style.order).toBe('1');
     expect(newestPane.style.order).toBe('2');
+
+    expect(controller.moveActivePane(1)).toBe(true);
+    expect(middlePane.style.order).toBe('2');
+    expect(middlePane.classList.contains('horizontal-panes-last-pane')).toBe(true);
+    expect(newestPane.classList.contains('horizontal-panes-last-pane')).toBe(false);
     controller.destroy();
   });
 

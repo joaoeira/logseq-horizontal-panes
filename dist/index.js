@@ -15,6 +15,7 @@
   var BODY_CLASS = "horizontal-panes-active";
   var SNAP_CLASS = "horizontal-panes-snap";
   var ACTIVE_PANE_CLASS = "horizontal-panes-active-pane";
+  var LAST_PANE_CLASS = "horizontal-panes-last-pane";
   var SIDEBAR_LIST_SELECTOR = ".sidebar-item-list";
   var PANE_SELECTOR = ":scope > .sidebar-item";
   var APP_CONTAINER_SELECTOR = "#app-container";
@@ -159,6 +160,7 @@
       document.body.classList.remove(BODY_CLASS, SNAP_CLASS);
       document.body.style.removeProperty("--horizontal-panes-main-width");
       document.body.style.removeProperty("--horizontal-panes-pane-width");
+      document.body.style.removeProperty("--horizontal-panes-last-pane-max-width");
       document.body.style.removeProperty("--horizontal-panes-gap");
       document.body.style.removeProperty("--horizontal-panes-main-gap");
       document.removeEventListener("wheel", this.handleWheel, true);
@@ -188,6 +190,10 @@
       const body = this.getDocument().body;
       body.style.setProperty("--horizontal-panes-main-width", `${this.options.mainWidthPx}px`);
       body.style.setProperty("--horizontal-panes-pane-width", `${this.options.paneWidthPx}px`);
+      body.style.setProperty(
+        "--horizontal-panes-last-pane-max-width",
+        `${Math.round(this.options.paneWidthPx * 1.25)}px`
+      );
       body.style.setProperty("--horizontal-panes-gap", `${this.options.paneGapPx}px`);
       body.style.setProperty("--horizontal-panes-main-gap", `${this.options.mainPaneGapPx}px`);
       body.classList.toggle(SNAP_CLASS, this.options.scrollSnap);
@@ -216,7 +222,7 @@
       this.sidebarObserver = null;
       this.paneScrollListeners.forEach((pane) => {
         pane.removeEventListener("scroll", this.handlePaneScroll);
-        pane.classList.remove(ACTIVE_PANE_CLASS);
+        pane.classList.remove(ACTIVE_PANE_CLASS, LAST_PANE_CLASS);
         pane.style.removeProperty("order");
       });
       this.paneScrollListeners.clear();
@@ -240,7 +246,7 @@
       this.paneScrollListeners.forEach((pane) => {
         if (currentPanes.has(pane)) return;
         pane.removeEventListener("scroll", this.handlePaneScroll);
-        pane.classList.remove(ACTIVE_PANE_CLASS);
+        pane.classList.remove(ACTIVE_PANE_CLASS, LAST_PANE_CLASS);
         pane.style.removeProperty("order");
         this.paneScrollListeners.delete(pane);
       });
@@ -557,6 +563,7 @@
     applyPaneOrder() {
       this.paneOrder.forEach((pane, index) => {
         pane.style.order = String(index);
+        pane.classList.toggle(LAST_PANE_CLASS, index === this.paneOrder.length - 1);
       });
     }
     getAppContainer() {
@@ -579,6 +586,7 @@
   body.horizontal-panes-active {
     --horizontal-panes-main-width: 680px;
     --horizontal-panes-pane-width: 680px;
+    --horizontal-panes-last-pane-max-width: 850px;
     --horizontal-panes-gap: 18px;
     --horizontal-panes-main-gap: 18px;
     --horizontal-panes-header-height: 48px;
@@ -594,6 +602,7 @@
     scroll-behavior: smooth;
     scrollbar-color: color-mix(in srgb, var(--ls-primary-text-color) 35%, transparent) transparent;
     scrollbar-width: thin;
+    background: var(--ls-secondary-background-color);
   }
 
   body.horizontal-panes-active.horizontal-panes-snap #app-container {
@@ -624,6 +633,7 @@
     height: 100vh;
     padding-top: var(--horizontal-panes-header-height) !important;
     scroll-snap-align: start;
+    background: var(--ls-primary-background-color);
   }
 
   body.horizontal-panes-active #left-container > .cp__header {
@@ -640,7 +650,10 @@
     display: block !important;
     flex: 0 0 auto !important;
     width: max-content !important;
-    min-width: 0 !important;
+    min-width: max(
+      0px,
+      calc(100vw - var(--horizontal-panes-main-width))
+    ) !important;
     max-width: none !important;
     height: 100vh !important;
     overflow: visible !important;
@@ -656,7 +669,10 @@
   body.horizontal-panes-active .cp__right-sidebar-scrollable {
     display: block !important;
     width: max-content !important;
-    min-width: max-content !important;
+    min-width: max(
+      0px,
+      calc(100vw - var(--horizontal-panes-main-width))
+    ) !important;
     max-width: none !important;
     height: 100vh !important;
     overflow: visible !important;
@@ -676,7 +692,10 @@
     align-content: flex-start !important;
     gap: var(--horizontal-panes-gap) !important;
     width: max-content !important;
-    min-width: max-content !important;
+    min-width: max(
+      0px,
+      calc(100vw - var(--horizontal-panes-main-width))
+    ) !important;
     height: 100vh !important;
     margin: 0 !important;
     padding:
@@ -685,7 +704,7 @@
       28px
       var(--horizontal-panes-main-gap) !important;
     overflow: visible !important;
-    background: var(--ls-primary-background-color) !important;
+    background: var(--ls-secondary-background-color) !important;
   }
 
   body.horizontal-panes-active .sidebar-item-list > .sidebar-drop-indicator,
@@ -713,9 +732,16 @@
     user-select: text;
     border: 1px solid color-mix(in srgb, var(--ls-primary-text-color) 12%, transparent);
     border-radius: 10px;
-    background: var(--ls-secondary-background-color);
+    background: var(--ls-primary-background-color);
     box-shadow: 0 8px 26px color-mix(in srgb, #000 14%, transparent);
     transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+
+  body.horizontal-panes-active
+    .sidebar-item-list
+    > .sidebar-item.horizontal-panes-last-pane:not(.collapsed) {
+    flex: 1 1 var(--horizontal-panes-pane-width) !important;
+    max-width: var(--horizontal-panes-last-pane-max-width) !important;
   }
 
   body.horizontal-panes-active .sidebar-item-list > .sidebar-item.horizontal-panes-active-pane {

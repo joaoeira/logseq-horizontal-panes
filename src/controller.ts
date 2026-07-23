@@ -3,6 +3,7 @@ import { scrollLeftForElement, shouldRemapWheelToHorizontal } from './geometry';
 const BODY_CLASS = 'horizontal-panes-active';
 const SNAP_CLASS = 'horizontal-panes-snap';
 const ACTIVE_PANE_CLASS = 'horizontal-panes-active-pane';
+const LAST_PANE_CLASS = 'horizontal-panes-last-pane';
 const SIDEBAR_LIST_SELECTOR = '.sidebar-item-list';
 const PANE_SELECTOR = ':scope > .sidebar-item';
 const APP_CONTAINER_SELECTOR = '#app-container';
@@ -191,6 +192,7 @@ export class HorizontalPanesController {
     document.body.classList.remove(BODY_CLASS, SNAP_CLASS);
     document.body.style.removeProperty('--horizontal-panes-main-width');
     document.body.style.removeProperty('--horizontal-panes-pane-width');
+    document.body.style.removeProperty('--horizontal-panes-last-pane-max-width');
     document.body.style.removeProperty('--horizontal-panes-gap');
     document.body.style.removeProperty('--horizontal-panes-main-gap');
     document.removeEventListener('wheel', this.handleWheel, true);
@@ -225,6 +227,10 @@ export class HorizontalPanesController {
     const body = this.getDocument().body;
     body.style.setProperty('--horizontal-panes-main-width', `${this.options.mainWidthPx}px`);
     body.style.setProperty('--horizontal-panes-pane-width', `${this.options.paneWidthPx}px`);
+    body.style.setProperty(
+      '--horizontal-panes-last-pane-max-width',
+      `${Math.round(this.options.paneWidthPx * 1.25)}px`
+    );
     body.style.setProperty('--horizontal-panes-gap', `${this.options.paneGapPx}px`);
     body.style.setProperty('--horizontal-panes-main-gap', `${this.options.mainPaneGapPx}px`);
     body.classList.toggle(SNAP_CLASS, this.options.scrollSnap);
@@ -258,7 +264,7 @@ export class HorizontalPanesController {
     this.sidebarObserver = null;
     this.paneScrollListeners.forEach((pane) => {
       pane.removeEventListener('scroll', this.handlePaneScroll);
-      pane.classList.remove(ACTIVE_PANE_CLASS);
+      pane.classList.remove(ACTIVE_PANE_CLASS, LAST_PANE_CLASS);
       pane.style.removeProperty('order');
     });
     this.paneScrollListeners.clear();
@@ -287,7 +293,7 @@ export class HorizontalPanesController {
     this.paneScrollListeners.forEach((pane) => {
       if (currentPanes.has(pane)) return;
       pane.removeEventListener('scroll', this.handlePaneScroll);
-      pane.classList.remove(ACTIVE_PANE_CLASS);
+      pane.classList.remove(ACTIVE_PANE_CLASS, LAST_PANE_CLASS);
       pane.style.removeProperty('order');
       this.paneScrollListeners.delete(pane);
     });
@@ -712,6 +718,7 @@ export class HorizontalPanesController {
   private applyPaneOrder(): void {
     this.paneOrder.forEach((pane, index) => {
       pane.style.order = String(index);
+      pane.classList.toggle(LAST_PANE_CLASS, index === this.paneOrder.length - 1);
     });
   }
 

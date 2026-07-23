@@ -3,6 +3,7 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
   body.horizontal-panes-active {
     --horizontal-panes-main-width: 680px;
     --horizontal-panes-pane-width: 680px;
+    --horizontal-panes-last-pane-max-width: 850px;
     --horizontal-panes-gap: 18px;
     --horizontal-panes-main-gap: 18px;
     --horizontal-panes-header-height: 48px;
@@ -18,6 +19,7 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
     scroll-behavior: smooth;
     scrollbar-color: color-mix(in srgb, var(--ls-primary-text-color) 35%, transparent) transparent;
     scrollbar-width: thin;
+    background: var(--ls-secondary-background-color);
   }
 
   body.horizontal-panes-active.horizontal-panes-snap #app-container {
@@ -48,6 +50,7 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
     height: 100vh;
     padding-top: var(--horizontal-panes-header-height) !important;
     scroll-snap-align: start;
+    background: var(--ls-primary-background-color);
   }
 
   body.horizontal-panes-active #left-container > .cp__header {
@@ -64,7 +67,10 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
     display: block !important;
     flex: 0 0 auto !important;
     width: max-content !important;
-    min-width: 0 !important;
+    min-width: max(
+      0px,
+      calc(100vw - var(--horizontal-panes-main-width))
+    ) !important;
     max-width: none !important;
     height: 100vh !important;
     overflow: visible !important;
@@ -80,7 +86,10 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
   body.horizontal-panes-active .cp__right-sidebar-scrollable {
     display: block !important;
     width: max-content !important;
-    min-width: max-content !important;
+    min-width: max(
+      0px,
+      calc(100vw - var(--horizontal-panes-main-width))
+    ) !important;
     max-width: none !important;
     height: 100vh !important;
     overflow: visible !important;
@@ -100,7 +109,10 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
     align-content: flex-start !important;
     gap: var(--horizontal-panes-gap) !important;
     width: max-content !important;
-    min-width: max-content !important;
+    min-width: max(
+      0px,
+      calc(100vw - var(--horizontal-panes-main-width))
+    ) !important;
     height: 100vh !important;
     margin: 0 !important;
     padding:
@@ -109,7 +121,7 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
       28px
       var(--horizontal-panes-main-gap) !important;
     overflow: visible !important;
-    background: var(--ls-primary-background-color) !important;
+    background: var(--ls-secondary-background-color) !important;
   }
 
   body.horizontal-panes-active .sidebar-item-list > .sidebar-drop-indicator,
@@ -137,9 +149,16 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
     user-select: text;
     border: 1px solid color-mix(in srgb, var(--ls-primary-text-color) 12%, transparent);
     border-radius: 10px;
-    background: var(--ls-secondary-background-color);
+    background: var(--ls-primary-background-color);
     box-shadow: 0 8px 26px color-mix(in srgb, #000 14%, transparent);
     transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+
+  body.horizontal-panes-active
+    .sidebar-item-list
+    > .sidebar-item.horizontal-panes-last-pane:not(.collapsed) {
+    flex: 1 1 var(--horizontal-panes-pane-width) !important;
+    max-width: var(--horizontal-panes-last-pane-max-width) !important;
   }
 
   body.horizontal-panes-active .sidebar-item-list > .sidebar-item.horizontal-panes-active-pane {
