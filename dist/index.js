@@ -144,6 +144,7 @@
       });
       this.getDocument().addEventListener("pointerdown", this.handlePointerDown, true);
       this.getDocument().addEventListener("focusin", this.handleFocusIn, true);
+      this.getDocument().addEventListener("focusout", this.handleFocusOut, true);
       this.getDocument().addEventListener("keydown", this.handleKeyDown, true);
       this.ensureSidebarList(false);
       this.sidebarPoll = window.setInterval(() => this.ensureSidebarList(true), 400);
@@ -158,6 +159,7 @@
       document.removeEventListener("wheel", this.handleWheel, true);
       document.removeEventListener("pointerdown", this.handlePointerDown, true);
       document.removeEventListener("focusin", this.handleFocusIn, true);
+      document.removeEventListener("focusout", this.handleFocusOut, true);
       document.removeEventListener("keydown", this.handleKeyDown, true);
       if (this.sidebarPoll !== null) {
         window.clearInterval(this.sidebarPoll);
@@ -332,6 +334,11 @@
         this.clearActivePane();
       }
     };
+    handleFocusOut = (event) => {
+      const target = event.target;
+      if (!(target instanceof this.getWindow().HTMLElement)) return;
+      this.rememberEditor(target);
+    };
     handleKeyDown = (event) => {
       const isApplePlatform = /Mac|iPhone|iPad/.test(this.getWindow().navigator.platform);
       const modifierPressed = event.metaKey || !isApplePlatform && event.ctrlKey;
@@ -349,15 +356,18 @@
     rememberCurrentEditor() {
       const activeElement = this.getDocument().activeElement;
       if (!(activeElement instanceof this.getWindow().HTMLElement)) return;
-      if (!activeElement.matches(EDITOR_SELECTOR)) return;
-      const block = activeElement.closest(BLOCK_SELECTOR);
-      const container = this.getEditorContainer(activeElement);
+      this.rememberEditor(activeElement);
+    }
+    rememberEditor(editor) {
+      if (!editor.matches(EDITOR_SELECTOR)) return;
+      const block = editor.closest(BLOCK_SELECTOR);
+      const container = this.getEditorContainer(editor);
       if (!block || !container) return;
       let selectionStart = null;
       let selectionEnd = null;
-      if (activeElement instanceof this.getWindow().HTMLTextAreaElement || activeElement instanceof this.getWindow().HTMLInputElement) {
-        selectionStart = activeElement.selectionStart;
-        selectionEnd = activeElement.selectionEnd;
+      if (editor instanceof this.getWindow().HTMLTextAreaElement || editor instanceof this.getWindow().HTMLInputElement) {
+        selectionStart = editor.selectionStart;
+        selectionEnd = editor.selectionEnd;
       }
       this.editorBookmarks.set(container, {
         block,

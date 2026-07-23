@@ -241,6 +241,58 @@ describe('HorizontalPanesController', () => {
     controller.destroy();
   });
 
+  it('remembers a pane editor when a mouse transition blurs it before switching', async () => {
+    const { list } = installFixture();
+    const rightPane = document.createElement('div');
+    const leftPane = document.createElement('div');
+    rightPane.className = 'sidebar-item';
+    leftPane.className = 'sidebar-item';
+    rightPane.innerHTML = `
+      <div class="ls-block" blockid="right-block">
+        <div class="block-editor"><textarea>right text</textarea></div>
+      </div>
+    `;
+    leftPane.innerHTML = `
+      <div class="ls-block" blockid="left-block">
+        <div class="block-content">left text</div>
+        <div class="block-editor"><textarea>left text</textarea></div>
+      </div>
+    `;
+    setLeft(leftPane, 650);
+    setLeft(rightPane, 1350);
+    list.append(rightPane, leftPane);
+
+    const leftBlock = leftPane.querySelector<HTMLElement>('.ls-block')!;
+    const leftContent = leftPane.querySelector<HTMLElement>('.block-content')!;
+    const originalLeftEditor = leftPane.querySelector<HTMLTextAreaElement>('textarea')!;
+    const rightEditor = rightPane.querySelector<HTMLTextAreaElement>('textarea')!;
+    leftContent.addEventListener('click', () => {
+      if (leftBlock.querySelector('textarea')) return;
+      const editor = document.createElement('textarea');
+      editor.className = 'block-editor';
+      editor.value = 'left text';
+      leftBlock.append(editor);
+    });
+
+    const controller = new HorizontalPanesController(options);
+    controller.setEnabled(true);
+
+    originalLeftEditor.focus();
+    originalLeftEditor.setSelectionRange(1, 4);
+    originalLeftEditor.blur();
+    originalLeftEditor.remove();
+    rightEditor.focus();
+
+    controller.focusAdjacentPane(-1);
+    await flushEditorFrames();
+
+    const restoredLeftEditor = leftPane.querySelector<HTMLTextAreaElement>('textarea')!;
+    expect(document.activeElement).toBe(restoredLeftEditor);
+    expect(restoredLeftEditor.selectionStart).toBe(1);
+    expect(restoredLeftEditor.selectionEnd).toBe(4);
+    controller.destroy();
+  });
+
   it('enters the first editable block when a pane has no remembered editor', async () => {
     const { list } = installFixture();
     const pane = document.createElement('div');
