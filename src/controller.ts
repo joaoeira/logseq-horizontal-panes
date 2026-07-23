@@ -86,7 +86,12 @@ export class HorizontalPanesController {
     }
 
     const appContainer = this.getAppContainer();
-    appContainer?.scrollTo({ left: 0, behavior });
+    if (appContainer) {
+      const nextLeft = mainContainer
+        ? this.getCenteredScrollLeft(appContainer, mainContainer)
+        : 0;
+      appContainer.scrollTo({ left: nextLeft, behavior });
+    }
     this.clearActivePane();
 
     if (restoreEditor && mainContainer && this.enabled) {
@@ -312,14 +317,21 @@ export class HorizontalPanesController {
     if (!appContainer) return;
 
     this.markActivePane(pane);
-    const nextLeft = scrollLeftForElement(
-      appContainer.getBoundingClientRect(),
-      pane.getBoundingClientRect(),
-      appContainer.scrollLeft,
-      this.options.paneGapPx
-    );
+    const nextLeft = this.getCenteredScrollLeft(appContainer, pane);
     appContainer.scrollTo({ left: nextLeft, behavior: 'smooth' });
     this.scheduleEditorRestore(pane);
+  }
+
+  private getCenteredScrollLeft(
+    appContainer: HTMLElement,
+    target: HTMLElement
+  ): number {
+    return scrollLeftForElement(
+      appContainer.getBoundingClientRect(),
+      target.getBoundingClientRect(),
+      appContainer.scrollLeft,
+      Math.max(0, appContainer.scrollWidth - appContainer.clientWidth)
+    );
   }
 
   private markActivePane(pane: HTMLElement): void {

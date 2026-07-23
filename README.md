@@ -43,7 +43,9 @@ run `Horizontal Panes: Toggle mode` from the command palette to switch it off.
 The focus shortcuts replace Logseq's default Back and Forward shortcuts. They
 also enter edit mode: the plugin remembers the last edited block and caret
 selection in each pane and restores them when returning. A pane that has not
-been edited yet opens its first editable block with the caret at the end.
+been edited yet opens its first editable block with the caret at the end. The
+focused pane is centered in the visible workspace whenever the available
+horizontal scroll range permits it.
 
 The main-page width, sidebar-pane width, the gap after the main page, the gap
 between sidebar panes, and optional scroll snapping are independently

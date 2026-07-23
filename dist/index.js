@@ -4,9 +4,11 @@
   function shouldRemapWheelToHorizontal(input) {
     return input.shiftKey && Math.abs(input.deltaY) > Math.abs(input.deltaX);
   }
-  function scrollLeftForElement(container, element, currentScrollLeft, leadingGap) {
-    const nextLeft = currentScrollLeft + element.left - container.left - leadingGap;
-    return Math.max(0, Math.round(nextLeft));
+  function scrollLeftForElement(container, element, currentScrollLeft, maxScrollLeft) {
+    const containerCenter = container.left + container.width / 2;
+    const elementCenter = element.left + element.width / 2;
+    const centeredScrollLeft = currentScrollLeft + elementCenter - containerCenter;
+    return Math.min(maxScrollLeft, Math.max(0, Math.round(centeredScrollLeft)));
   }
 
   // src/controller.ts
@@ -73,7 +75,10 @@
         }
       }
       const appContainer = this.getAppContainer();
-      appContainer?.scrollTo({ left: 0, behavior });
+      if (appContainer) {
+        const nextLeft = mainContainer ? this.getCenteredScrollLeft(appContainer, mainContainer) : 0;
+        appContainer.scrollTo({ left: nextLeft, behavior });
+      }
       this.clearActivePane();
       if (restoreEditor && mainContainer && this.enabled) {
         this.scheduleEditorRestore(mainContainer);
@@ -261,14 +266,17 @@
       const appContainer = this.getAppContainer();
       if (!appContainer) return;
       this.markActivePane(pane);
-      const nextLeft = scrollLeftForElement(
-        appContainer.getBoundingClientRect(),
-        pane.getBoundingClientRect(),
-        appContainer.scrollLeft,
-        this.options.paneGapPx
-      );
+      const nextLeft = this.getCenteredScrollLeft(appContainer, pane);
       appContainer.scrollTo({ left: nextLeft, behavior: "smooth" });
       this.scheduleEditorRestore(pane);
+    }
+    getCenteredScrollLeft(appContainer, target) {
+      return scrollLeftForElement(
+        appContainer.getBoundingClientRect(),
+        target.getBoundingClientRect(),
+        appContainer.scrollLeft,
+        Math.max(0, appContainer.scrollWidth - appContainer.clientWidth)
+      );
     }
     markActivePane(pane) {
       this.clearActivePane();

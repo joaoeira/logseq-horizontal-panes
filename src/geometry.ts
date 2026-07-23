@@ -4,8 +4,9 @@ export type HorizontalWheelInput = {
   deltaY: number;
 };
 
-export type RectEdges = {
+export type HorizontalRect = {
   left: number;
+  width: number;
 };
 
 export function shouldRemapWheelToHorizontal(input: HorizontalWheelInput): boolean {
@@ -13,12 +14,14 @@ export function shouldRemapWheelToHorizontal(input: HorizontalWheelInput): boole
 }
 
 export function scrollLeftForElement(
-  container: RectEdges,
-  element: RectEdges,
+  container: HorizontalRect,
+  element: HorizontalRect,
   currentScrollLeft: number,
-  leadingGap: number
+  maxScrollLeft: number
 ): number {
-  const nextLeft = currentScrollLeft + element.left - container.left - leadingGap;
+  const containerCenter = container.left + container.width / 2;
+  const elementCenter = element.left + element.width / 2;
+  const centeredScrollLeft = currentScrollLeft + elementCenter - containerCenter;
 
-  return Math.max(0, Math.round(nextLeft));
+  return Math.min(maxScrollLeft, Math.max(0, Math.round(centeredScrollLeft)));
 }

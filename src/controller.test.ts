@@ -11,14 +11,14 @@ const options = {
   scrollSnap: false,
 };
 
-function setLeft(element: HTMLElement, left: number): void {
+function setLeft(element: HTMLElement, left: number, width = 680): void {
   element.getBoundingClientRect = () =>
     ({
       left,
-      right: left + 680,
+      right: left + width,
       top: 0,
       bottom: 700,
-      width: 680,
+      width,
       height: 700,
       x: left,
       y: 0,
@@ -46,7 +46,11 @@ function installFixture(): {
     app.scrollLeft = left ?? app.scrollLeft;
   });
   app.scrollTo = scrollTo as unknown as typeof app.scrollTo;
-  setLeft(app, 0);
+  Object.defineProperties(app, {
+    clientWidth: { configurable: true, value: 1000 },
+    scrollWidth: { configurable: true, value: 3000 },
+  });
+  setLeft(app, 0, 1000);
 
   return { app, list, scrollTo };
 }
@@ -111,7 +115,7 @@ describe('HorizontalPanesController', () => {
     await flushMutationAndFrames();
 
     expect(newestPane.classList.contains('horizontal-panes-active-pane')).toBe(true);
-    expect(scrollTo).toHaveBeenLastCalledWith({ left: 1382, behavior: 'smooth' });
+    expect(scrollTo).toHaveBeenLastCalledWith({ left: 1240, behavior: 'smooth' });
     expect(list.children[0]).toBe(newestPane);
     controller.destroy();
   });
@@ -300,7 +304,7 @@ describe('HorizontalPanesController', () => {
     document.dispatchEvent(focusRight);
 
     expect(focusRight.defaultPrevented).toBe(true);
-    expect(scrollTo).toHaveBeenLastCalledWith({ left: 632, behavior: 'smooth' });
+    expect(scrollTo).toHaveBeenLastCalledWith({ left: 490, behavior: 'smooth' });
     expect(list.querySelector('.horizontal-panes-active-pane')).toBe(oldestPane);
 
     const moveRight = new KeyboardEvent('keydown', {
