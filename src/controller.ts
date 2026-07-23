@@ -1,0 +1,299 @@
+import { scrollLeftForElement, shouldRemapWheelToHorizontal } from './geometry';
+
+const BODY_CLASS = 'horizontal-panes-active';
+const SNAP_CLASS = 'horizontal-panes-snap';
+const ACTIVE_PANE_CLASS = 'horizontal-panes-active-pane';
+const SIDEBAR_LIST_SELECTOR = '.sidebar-item-list';
+const PANE_SELECTOR = ':scope > .sidebar-item';
+const APP_CONTAINER_SELECTOR = '#app-container';
+const MAIN_CONTAINER_SELECTOR = '#left-container';
+
+export type HorizontalPanesOptions = {
+  paneWidthPx: number;
+  paneGapPx: number;
+  scrollSnap: boolean;
+};
+
+export class HorizontalPanesController {
+  private enabled = false;
+  private options: HorizontalPanesOptions;
+  private sidebarList: HTMLElement | null = null;
+  private sidebarObserver: MutationObserver | null = null;
+  private sidebarPoll: number | null = null;
+  private paneScrollListeners = new Set<HTMLElement>();
+  private pendingFocusFrame: number | null = null;
+
+  constructor(options: HorizontalPanesOptions) {
+    this.options = options;
+  }
+
+  setOptions(options: HorizontalPanesOptions): void {
+    this.options = options;
+    this.applyCssVariables();
+  }
+
+  setEnabled(nextEnabled: boolean): void {
+    if (nextEnabled === this.enabled) {
+      this.applyCssVariables();
+      return;
+    }
+
+    this.enabled = nextEnabled;
+    if (nextEnabled) {
+      this.activate();
+    } else {
+      this.deactivate();
+    }
+  }
+
+  isEnabled(): boolean {
+    return this.enabled;
+  }
+
+  focusMain(behavior: ScrollBehavior = 'smooth'): void {
+    const appContainer = this.getAppContainer();
+    appContainer?.scrollTo({ left: 0, behavior });
+    this.clearActivePane();
+  }
+
+  focusAdjacentPane(direction: -1 | 1): void {
+    const panes = this.getPanes();
+    if (panes.length === 0) {
+      this.focusMain();
+      return;
+    }
+
+    const activeIndex = panes.findIndex((pane) => pane.classList.contains(ACTIVE_PANE_CLASS));
+    if (activeIndex === -1) {
+      if (direction < 0) {
+        this.focusMain();
+      } else {
+        const firstPane = panes[0];
+        if (firstPane) {
+          this.focusPane(firstPane);
+        }
+      }
+      return;
+    }
+
+    const nextIndex = activeIndex + direction;
+    if (nextIndex < 0) {
+      this.focusMain();
+      return;
+    }
+
+    const nextPane = panes[Math.min(nextIndex, panes.length - 1)];
+    if (nextPane) {
+      this.focusPane(nextPane);
+    }
+  }
+
+  destroy(): void {
+    this.enabled = false;
+    this.deactivate();
+  }
+
+  private activate(): void {
+    const body = this.getDocument().body;
+    body.classList.add(BODY_CLASS);
+    body.classList.toggle(SNAP_CLASS, this.options.scrollSnap);
+    this.applyCssVariables();
+
+    this.getDocument().addEventListener('wheel', this.handleWheel, {
+      capture: true,
+      passive: false,
+    });
+    this.getDocument().addEventListener('pointerdown', this.handlePointerDown, true);
+
+    this.ensureSidebarList(false);
+    this.sidebarPoll = window.setInterval(() => this.ensureSidebarList(true), 400);
+  }
+
+  private deactivate(): void {
+    const document = this.getDocument();
+    document.body.classList.remove(BODY_CLASS, SNAP_CLASS);
+    document.body.style.removeProperty('--horizontal-panes-pane-width');
+    document.body.style.removeProperty('--horizontal-panes-gap');
+    document.removeEventListener('wheel', this.handleWheel, true);
+    document.removeEventListener('pointerdown', this.handlePointerDown, true);
+
+    if (this.sidebarPoll !== null) {
+      window.clearInterval(this.sidebarPoll);
+      this.sidebarPoll = null;
+    }
+
+    if (this.pendingFocusFrame !== null) {
+      window.cancelAnimationFrame(this.pendingFocusFrame);
+      this.pendingFocusFrame = null;
+    }
+
+    this.disconnectSidebarList();
+    this.focusMain('auto');
+  }
+
+  private applyCssVariables(): void {
+    if (!this.enabled) return;
+    const body = this.getDocument().body;
+    body.style.setProperty('--horizontal-panes-pane-width', `${this.options.paneWidthPx}px`);
+    body.style.setProperty('--horizontal-panes-gap', `${this.options.paneGapPx}px`);
+    body.classList.toggle(SNAP_CLASS, this.options.scrollSnap);
+  }
+
+  private ensureSidebarList(focusNewestWhenAttached: boolean): void {
+    const nextList = this.getDocument().querySelector<HTMLElement>(SIDEBAR_LIST_SELECTOR);
+    if (nextList === this.sidebarList && nextList?.isConnected) return;
+
+    this.disconnectSidebarList();
+    if (!nextList) return;
+
+    this.sidebarList = nextList;
+    this.sidebarObserver = new MutationObserver(this.handleSidebarMutations);
+    this.sidebarObserver.observe(nextList, { childList: true });
+    this.getPanes().forEach((pane) => this.attachPaneScrollListener(pane));
+
+    if (focusNewestWhenAttached) {
+      const panes = this.getPanes();
+      const newestPane = panes.at(-1);
+      if (newestPane) {
+        this.scheduleFocus(newestPane);
+      }
+    }
+  }
+
+  private disconnectSidebarList(): void {
+    this.sidebarObserver?.disconnect();
+    this.sidebarObserver = null;
+    this.paneScrollListeners.forEach((pane) => {
+      pane.removeEventListener('scroll', this.handlePaneScroll);
+      pane.classList.remove(ACTIVE_PANE_CLASS);
+    });
+    this.paneScrollListeners.clear();
+    this.sidebarList = null;
+  }
+
+  private readonly handleSidebarMutations = (mutations: MutationRecord[]): void => {
+    const addedPanes: HTMLElement[] = [];
+
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (!(node instanceof this.getWindow().Element)) continue;
+        const element = node as Element;
+        if (element.matches('.sidebar-item')) {
+          addedPanes.push(element as HTMLElement);
+        }
+        element
+          .querySelectorAll<HTMLElement>('.sidebar-item')
+          .forEach((pane) => addedPanes.push(pane));
+      }
+    }
+
+    addedPanes.forEach((pane) => this.attachPaneScrollListener(pane));
+    const newestPane = addedPanes.at(-1);
+    if (newestPane) {
+      this.scheduleFocus(newestPane);
+    }
+  };
+
+  private scheduleFocus(pane: HTMLElement): void {
+    if (this.pendingFocusFrame !== null) {
+      window.cancelAnimationFrame(this.pendingFocusFrame);
+    }
+
+    this.pendingFocusFrame = window.requestAnimationFrame(() => {
+      this.pendingFocusFrame = window.requestAnimationFrame(() => {
+        this.pendingFocusFrame = null;
+        if (pane.isConnected && this.enabled) {
+          this.focusPane(pane);
+        }
+      });
+    });
+  }
+
+  private focusPane(pane: HTMLElement): void {
+    const appContainer = this.getAppContainer();
+    if (!appContainer) return;
+
+    this.markActivePane(pane);
+    const nextLeft = scrollLeftForElement(
+      appContainer.getBoundingClientRect(),
+      pane.getBoundingClientRect(),
+      appContainer.scrollLeft,
+      this.options.paneGapPx
+    );
+    appContainer.scrollTo({ left: nextLeft, behavior: 'smooth' });
+  }
+
+  private markActivePane(pane: HTMLElement): void {
+    this.clearActivePane();
+    pane.classList.add(ACTIVE_PANE_CLASS);
+  }
+
+  private clearActivePane(): void {
+    this.sidebarList
+      ?.querySelectorAll(`.${ACTIVE_PANE_CLASS}`)
+      .forEach((pane) => pane.classList.remove(ACTIVE_PANE_CLASS));
+  }
+
+  private attachPaneScrollListener(pane: HTMLElement): void {
+    if (this.paneScrollListeners.has(pane)) return;
+    pane.addEventListener('scroll', this.handlePaneScroll, { passive: true });
+    this.paneScrollListeners.add(pane);
+  }
+
+  private readonly handlePaneScroll = (): void => {
+    // Logseq DB graphs virtualize sidebar content against this native list.
+    this.sidebarList?.dispatchEvent(new Event('scroll'));
+  };
+
+  private readonly handleWheel = (event: WheelEvent): void => {
+    if (
+      !this.enabled ||
+      !shouldRemapWheelToHorizontal({
+        shiftKey: event.shiftKey,
+        deltaX: event.deltaX,
+        deltaY: event.deltaY,
+      })
+    ) {
+      return;
+    }
+
+    const appContainer = this.getAppContainer();
+    if (!appContainer) return;
+
+    event.preventDefault();
+    appContainer.scrollLeft += event.deltaY;
+  };
+
+  private readonly handlePointerDown = (event: PointerEvent): void => {
+    const target = event.target;
+    if (!(target instanceof this.getWindow().Element)) return;
+    const targetElement = target as Element;
+
+    const pane = targetElement.closest<HTMLElement>('.sidebar-item');
+    if (pane && this.sidebarList?.contains(pane)) {
+      this.markActivePane(pane);
+      return;
+    }
+
+    if (targetElement.closest(MAIN_CONTAINER_SELECTOR)) {
+      this.clearActivePane();
+    }
+  };
+
+  private getPanes(): HTMLElement[] {
+    if (!this.sidebarList) return [];
+    return Array.from(this.sidebarList.querySelectorAll<HTMLElement>(PANE_SELECTOR)).reverse();
+  }
+
+  private getAppContainer(): HTMLElement | null {
+    return this.getDocument().querySelector<HTMLElement>(APP_CONTAINER_SELECTOR);
+  }
+
+  private getDocument(): Document {
+    return parent.document;
+  }
+
+  private getWindow(): Window & typeof globalThis {
+    return parent as Window & typeof globalThis;
+  }
+}

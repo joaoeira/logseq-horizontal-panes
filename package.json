@@ -1,0 +1,27 @@
+{
+  "name": "logseq-horizontal-panes",
+  "version": "0.1.0",
+  "description": "Roam-style horizontal panes for Logseq using native right-sidebar pages.",
+  "main": "dist/index.js",
+  "author": "Joao Eira",
+  "license": "MIT",
+  "scripts": {
+    "build": "npm run typecheck && esbuild src/index.ts --bundle --format=iife --platform=browser --target=chrome120 --outfile=dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "check": "npm run test && npm run build"
+  },
+  "devDependencies": {
+    "@logseq/libs": "^0.0.17",
+    "esbuild": "^0.25.0",
+    "jsdom": "^26.0.0",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.0"
+  },
+  "logseq": {
+    "id": "logseq-horizontal-panes",
+    "title": "Horizontal Panes",
+    "icon": "./icon.svg",
+    "description": "Turns Logseq's native right-sidebar pages into a Roam-style horizontal workspace."
+  }
+}
