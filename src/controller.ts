@@ -37,9 +37,14 @@ export type HorizontalPanesOptions = {
   scrollSnap: boolean;
 };
 
+export type HorizontalPanesHost = {
+  commitCurrentEditor?: () => Promise<void>;
+};
+
 export class HorizontalPanesController {
   private enabled = false;
   private options: HorizontalPanesOptions;
+  private readonly host: HorizontalPanesHost;
   private sidebarList: HTMLElement | null = null;
   private sidebarObserver: MutationObserver | null = null;
   private sidebarPoll: number | null = null;
@@ -47,10 +52,13 @@ export class HorizontalPanesController {
   private paneOrder: HTMLElement[] = [];
   private pendingFocusFrame: number | null = null;
   private pendingEditorFrame: number | null = null;
+  private pendingOutgoingCommit: Promise<void> | null = null;
+  private editorRestoreGeneration = 0;
   private editorBookmarks = new WeakMap<HTMLElement, EditorBookmark>();
 
-  constructor(options: HorizontalPanesOptions) {
+  constructor(options: HorizontalPanesOptions, host: HorizontalPanesHost = {}) {
     this.options = options;
+    this.host = host;
   }
 
   setOptions(options: HorizontalPanesOptions): void {
@@ -78,10 +86,11 @@ export class HorizontalPanesController {
 
   focusMain(behavior: ScrollBehavior = 'smooth', restoreEditor = true): void {
     const mainContainer = this.getMainContainer();
+    let outgoingCommit: Promise<void> | null = null;
     if (restoreEditor) {
       this.rememberCurrentEditor();
       if (mainContainer) {
-        this.releaseEditorOutside(mainContainer);
+        outgoingCommit = this.releaseEditorOutside(mainContainer);
       }
     }
 
@@ -95,7 +104,7 @@ export class HorizontalPanesController {
     this.clearActivePane();
 
     if (restoreEditor && mainContainer && this.enabled) {
-      this.scheduleEditorRestore(mainContainer);
+      this.scheduleEditorRestore(mainContainer, outgoingCommit);
     }
   }
 
@@ -204,6 +213,8 @@ export class HorizontalPanesController {
       window.cancelAnimationFrame(this.pendingEditorFrame);
       this.pendingEditorFrame = null;
     }
+    this.editorRestoreGeneration += 1;
+    this.pendingOutgoingCommit = null;
 
     this.disconnectSidebarList();
     this.focusMain('auto', false);
@@ -314,14 +325,14 @@ export class HorizontalPanesController {
 
   private focusPane(pane: HTMLElement): void {
     this.rememberCurrentEditor();
-    this.releaseEditorOutside(pane);
+    const outgoingCommit = this.releaseEditorOutside(pane);
     const appContainer = this.getAppContainer();
     if (!appContainer) return;
 
     this.markActivePane(pane);
     const nextLeft = this.getCenteredScrollLeft(appContainer, pane);
     appContainer.scrollTo({ left: nextLeft, behavior: 'smooth' });
-    this.scheduleEditorRestore(pane);
+    this.scheduleEditorRestore(pane, outgoingCommit);
   }
 
   private getCenteredScrollLeft(
@@ -469,25 +480,70 @@ export class HorizontalPanesController {
     });
   }
 
-  private releaseEditorOutside(targetContainer: HTMLElement): void {
+  private releaseEditorOutside(targetContainer: HTMLElement): Promise<void> | null {
     const activeElement = this.getDocument().activeElement;
-    if (!(activeElement instanceof this.getWindow().HTMLElement)) return;
-    if (!activeElement.matches(EDITOR_SELECTOR)) return;
-    if (targetContainer.contains(activeElement)) return;
+    if (!(activeElement instanceof this.getWindow().HTMLElement)) {
+      return this.pendingOutgoingCommit;
+    }
+    if (!activeElement.matches(EDITOR_SELECTOR)) {
+      return this.pendingOutgoingCommit;
+    }
+    if (targetContainer.contains(activeElement)) return null;
 
-    activeElement.blur();
-  }
-
-  private scheduleEditorRestore(container: HTMLElement): void {
-    if (this.pendingEditorFrame !== null) {
-      window.cancelAnimationFrame(this.pendingEditorFrame);
+    let outgoingCommit: Promise<void> | null = null;
+    try {
+      outgoingCommit = this.host.commitCurrentEditor?.() ?? null;
+    } catch {
+      // A host bridge failure should not prevent keyboard navigation.
     }
 
-    this.pendingEditorFrame = window.requestAnimationFrame(() => {
-      this.pendingEditorFrame = null;
-      if (!this.enabled || !container.isConnected) return;
-      this.restoreEditor(container);
+    activeElement.blur();
+    if (!outgoingCommit) return this.pendingOutgoingCommit;
+
+    const previousCommit = this.pendingOutgoingCommit;
+    const combinedCommit = previousCommit
+      ? Promise.all([previousCommit, outgoingCommit]).then(() => undefined)
+      : outgoingCommit;
+    const trackedCommit = combinedCommit.catch(() => undefined);
+    this.pendingOutgoingCommit = trackedCommit;
+    void trackedCommit.then(() => {
+      if (this.pendingOutgoingCommit === trackedCommit) {
+        this.pendingOutgoingCommit = null;
+      }
     });
+    return trackedCommit;
+  }
+
+  private scheduleEditorRestore(
+    container: HTMLElement,
+    outgoingCommit: Promise<void> | null = null
+  ): void {
+    if (this.pendingEditorFrame !== null) {
+      window.cancelAnimationFrame(this.pendingEditorFrame);
+      this.pendingEditorFrame = null;
+    }
+
+    const restoreGeneration = ++this.editorRestoreGeneration;
+    const queueRestore = (): void => {
+      if (restoreGeneration !== this.editorRestoreGeneration) return;
+      this.pendingEditorFrame = window.requestAnimationFrame(() => {
+        this.pendingEditorFrame = null;
+        if (
+          restoreGeneration !== this.editorRestoreGeneration ||
+          !this.enabled ||
+          !container.isConnected
+        ) {
+          return;
+        }
+        this.restoreEditor(container);
+      });
+    };
+
+    if (outgoingCommit) {
+      void outgoingCommit.catch(() => undefined).then(queueRestore);
+    } else {
+      queueRestore();
+    }
   }
 
   private restoreEditor(container: HTMLElement): void {

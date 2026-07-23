@@ -129,7 +129,11 @@ async function main(): Promise<void> {
   logseq.provideStyle(HORIZONTAL_PANES_STYLES);
 
   const initialSettings = readSettings();
-  const controller = new HorizontalPanesController(controllerOptions(initialSettings));
+  const controller = new HorizontalPanesController(controllerOptions(initialSettings), {
+    async commitCurrentEditor() {
+      await logseq.Editor.exitEditingMode(false);
+    },
+  });
   controller.setEnabled(initialSettings.enabled);
 
   const applySettings = (): void => {

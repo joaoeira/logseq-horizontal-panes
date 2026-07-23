@@ -36,6 +36,7 @@
   var HorizontalPanesController = class {
     enabled = false;
     options;
+    host;
     sidebarList = null;
     sidebarObserver = null;
     sidebarPoll = null;
@@ -43,9 +44,12 @@
     paneOrder = [];
     pendingFocusFrame = null;
     pendingEditorFrame = null;
+    pendingOutgoingCommit = null;
+    editorRestoreGeneration = 0;
     editorBookmarks = /* @__PURE__ */ new WeakMap();
-    constructor(options) {
+    constructor(options, host = {}) {
       this.options = options;
+      this.host = host;
     }
     setOptions(options) {
       this.options = options;
@@ -68,10 +72,11 @@
     }
     focusMain(behavior = "smooth", restoreEditor = true) {
       const mainContainer = this.getMainContainer();
+      let outgoingCommit = null;
       if (restoreEditor) {
         this.rememberCurrentEditor();
         if (mainContainer) {
-          this.releaseEditorOutside(mainContainer);
+          outgoingCommit = this.releaseEditorOutside(mainContainer);
         }
       }
       const appContainer = this.getAppContainer();
@@ -81,7 +86,7 @@
       }
       this.clearActivePane();
       if (restoreEditor && mainContainer && this.enabled) {
-        this.scheduleEditorRestore(mainContainer);
+        this.scheduleEditorRestore(mainContainer, outgoingCommit);
       }
     }
     focusAdjacentPane(direction) {
@@ -173,6 +178,8 @@
         window.cancelAnimationFrame(this.pendingEditorFrame);
         this.pendingEditorFrame = null;
       }
+      this.editorRestoreGeneration += 1;
+      this.pendingOutgoingCommit = null;
       this.disconnectSidebarList();
       this.focusMain("auto", false);
     }
@@ -264,13 +271,13 @@
     }
     focusPane(pane) {
       this.rememberCurrentEditor();
-      this.releaseEditorOutside(pane);
+      const outgoingCommit = this.releaseEditorOutside(pane);
       const appContainer = this.getAppContainer();
       if (!appContainer) return;
       this.markActivePane(pane);
       const nextLeft = this.getCenteredScrollLeft(appContainer, pane);
       appContainer.scrollTo({ left: nextLeft, behavior: "smooth" });
-      this.scheduleEditorRestore(pane);
+      this.scheduleEditorRestore(pane, outgoingCommit);
     }
     getCenteredScrollLeft(appContainer, target) {
       return scrollLeftForElement(
@@ -378,20 +385,52 @@
     }
     releaseEditorOutside(targetContainer) {
       const activeElement = this.getDocument().activeElement;
-      if (!(activeElement instanceof this.getWindow().HTMLElement)) return;
-      if (!activeElement.matches(EDITOR_SELECTOR)) return;
-      if (targetContainer.contains(activeElement)) return;
+      if (!(activeElement instanceof this.getWindow().HTMLElement)) {
+        return this.pendingOutgoingCommit;
+      }
+      if (!activeElement.matches(EDITOR_SELECTOR)) {
+        return this.pendingOutgoingCommit;
+      }
+      if (targetContainer.contains(activeElement)) return null;
+      let outgoingCommit = null;
+      try {
+        outgoingCommit = this.host.commitCurrentEditor?.() ?? null;
+      } catch {
+      }
       activeElement.blur();
+      if (!outgoingCommit) return this.pendingOutgoingCommit;
+      const previousCommit = this.pendingOutgoingCommit;
+      const combinedCommit = previousCommit ? Promise.all([previousCommit, outgoingCommit]).then(() => void 0) : outgoingCommit;
+      const trackedCommit = combinedCommit.catch(() => void 0);
+      this.pendingOutgoingCommit = trackedCommit;
+      void trackedCommit.then(() => {
+        if (this.pendingOutgoingCommit === trackedCommit) {
+          this.pendingOutgoingCommit = null;
+        }
+      });
+      return trackedCommit;
     }
-    scheduleEditorRestore(container) {
+    scheduleEditorRestore(container, outgoingCommit = null) {
       if (this.pendingEditorFrame !== null) {
         window.cancelAnimationFrame(this.pendingEditorFrame);
-      }
-      this.pendingEditorFrame = window.requestAnimationFrame(() => {
         this.pendingEditorFrame = null;
-        if (!this.enabled || !container.isConnected) return;
-        this.restoreEditor(container);
-      });
+      }
+      const restoreGeneration = ++this.editorRestoreGeneration;
+      const queueRestore = () => {
+        if (restoreGeneration !== this.editorRestoreGeneration) return;
+        this.pendingEditorFrame = window.requestAnimationFrame(() => {
+          this.pendingEditorFrame = null;
+          if (restoreGeneration !== this.editorRestoreGeneration || !this.enabled || !container.isConnected) {
+            return;
+          }
+          this.restoreEditor(container);
+        });
+      };
+      if (outgoingCommit) {
+        void outgoingCommit.catch(() => void 0).then(queueRestore);
+      } else {
+        queueRestore();
+      }
     }
     restoreEditor(container) {
       const bookmark = this.editorBookmarks.get(container);
@@ -823,7 +862,11 @@
     logseq.useSettingsSchema(settingsSchema);
     logseq.provideStyle(HORIZONTAL_PANES_STYLES);
     const initialSettings = readSettings();
-    const controller = new HorizontalPanesController(controllerOptions(initialSettings));
+    const controller = new HorizontalPanesController(controllerOptions(initialSettings), {
+      async commitCurrentEditor() {
+        await logseq.Editor.exitEditingMode(false);
+      }
+    });
     controller.setEnabled(initialSettings.enabled);
     const applySettings = () => {
       const settings = readSettings();

@@ -63,8 +63,8 @@ async function flushMutationAndFrames(): Promise<void> {
 }
 
 async function flushEditorFrames(): Promise<void> {
-  await Promise.resolve();
   for (let frame = 0; frame < 4; frame += 1) {
+    await Promise.resolve();
     vi.runOnlyPendingTimers();
   }
 }
@@ -238,6 +238,108 @@ describe('HorizontalPanesController', () => {
     expect(document.activeElement).toBe(mainEditor);
     expect(mainEditor.selectionStart).toBe(2);
     expect(mainEditor.selectionEnd).toBe(4);
+    controller.destroy();
+  });
+
+  it('waits for Logseq to commit the outgoing editor before restoring another one', async () => {
+    const { list } = installFixture();
+    const main = document.querySelector<HTMLElement>('#left-container')!;
+    main.innerHTML = `
+      <div class="ls-block" blockid="main-block">
+        <div class="block-editor"><textarea>fresh main content</textarea></div>
+      </div>
+    `;
+
+    const pane = document.createElement('div');
+    pane.className = 'sidebar-item';
+    pane.innerHTML = `
+      <div class="ls-block" blockid="pane-block">
+        <div class="block-content">
+          <span class="block-title-wrap">pane content</span>
+        </div>
+      </div>
+    `;
+    setLeft(pane, 700);
+    list.append(pane);
+
+    const block = pane.querySelector<HTMLElement>('.ls-block')!;
+    const title = pane.querySelector<HTMLElement>('.block-title-wrap')!;
+    title.addEventListener('pointerdown', () => {
+      if (block.querySelector('textarea')) return;
+      const editor = document.createElement('textarea');
+      editor.className = 'block-editor';
+      editor.value = 'pane content';
+      block.append(editor);
+    });
+
+    let finishCommit!: () => void;
+    const commitFinished = new Promise<void>((resolve) => {
+      finishCommit = resolve;
+    });
+    const commitCurrentEditor = vi.fn(() => commitFinished);
+    const controller = new HorizontalPanesController(options, {
+      commitCurrentEditor,
+    });
+    controller.setEnabled(true);
+
+    const mainEditor = main.querySelector<HTMLTextAreaElement>('textarea')!;
+    mainEditor.focus();
+    controller.focusAdjacentPane(1);
+    await flushEditorFrames();
+
+    expect(commitCurrentEditor).toHaveBeenCalledOnce();
+    expect(pane.classList.contains('horizontal-panes-active-pane')).toBe(true);
+    expect(pane.querySelector('textarea')).toBeNull();
+
+    finishCommit();
+    await Promise.resolve();
+    await flushEditorFrames();
+
+    expect(document.activeElement).toBe(pane.querySelector('textarea'));
+    controller.destroy();
+  });
+
+  it('keeps a rapid reverse navigation behind the same pending content commit', async () => {
+    const { list } = installFixture();
+    const main = document.querySelector<HTMLElement>('#left-container')!;
+    main.innerHTML = `
+      <div class="ls-block" blockid="main-block">
+        <div class="block-editor"><textarea>fresh main content</textarea></div>
+      </div>
+    `;
+
+    const pane = document.createElement('div');
+    pane.className = 'sidebar-item';
+    pane.innerHTML = `
+      <div class="ls-block" blockid="pane-block">
+        <div class="block-editor"><textarea>pane content</textarea></div>
+      </div>
+    `;
+    setLeft(pane, 700);
+    list.append(pane);
+
+    let finishCommit!: () => void;
+    const commitFinished = new Promise<void>((resolve) => {
+      finishCommit = resolve;
+    });
+    const controller = new HorizontalPanesController(options, {
+      commitCurrentEditor: () => commitFinished,
+    });
+    controller.setEnabled(true);
+
+    const mainEditor = main.querySelector<HTMLTextAreaElement>('textarea')!;
+    mainEditor.focus();
+    controller.focusAdjacentPane(1);
+    controller.focusAdjacentPane(-1);
+    await flushEditorFrames();
+
+    expect(document.activeElement).not.toBe(mainEditor);
+
+    finishCommit();
+    await Promise.resolve();
+    await flushEditorFrames();
+
+    expect(document.activeElement).toBe(mainEditor);
     controller.destroy();
   });
 
