@@ -5,6 +5,7 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
     --horizontal-panes-pane-width: 680px;
     --horizontal-panes-gap: 18px;
     --horizontal-panes-main-gap: 18px;
+    --horizontal-panes-header-height: 48px;
     overflow: hidden !important;
   }
 
@@ -39,12 +40,24 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
   }
 
   body.horizontal-panes-active #left-container {
+    box-sizing: border-box !important;
     flex: 0 0 var(--horizontal-panes-main-width) !important;
     width: var(--horizontal-panes-main-width) !important;
     min-width: var(--horizontal-panes-main-width) !important;
     max-width: var(--horizontal-panes-main-width) !important;
     height: 100vh;
+    padding-top: var(--horizontal-panes-header-height) !important;
     scroll-snap-align: start;
+  }
+
+  body.horizontal-panes-active #left-container > .cp__header {
+    box-sizing: border-box;
+    position: fixed !important;
+    inset: 0 0 auto 0 !important;
+    z-index: 50;
+    width: 100vw !important;
+    min-width: 100vw !important;
+    max-width: none !important;
   }
 
   body.horizontal-panes-active #right-sidebar.open {
@@ -90,7 +103,11 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
     min-width: max-content !important;
     height: 100vh !important;
     margin: 0 !important;
-    padding: 18px 48px 28px var(--horizontal-panes-main-gap) !important;
+    padding:
+      calc(var(--horizontal-panes-header-height) + 18px)
+      48px
+      28px
+      var(--horizontal-panes-main-gap) !important;
     overflow: visible !important;
     background: var(--ls-primary-background-color) !important;
   }
@@ -109,9 +126,9 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
     width: var(--horizontal-panes-pane-width) !important;
     min-width: var(--horizontal-panes-pane-width) !important;
     max-width: var(--horizontal-panes-pane-width) !important;
-    height: calc(100vh - 46px) !important;
+    height: calc(100vh - var(--horizontal-panes-header-height) - 46px) !important;
     min-height: 0 !important;
-    max-height: calc(100vh - 46px) !important;
+    max-height: calc(100vh - var(--horizontal-panes-header-height) - 46px) !important;
     margin: 0 !important;
     padding: 0 !important;
     overflow-x: hidden !important;
