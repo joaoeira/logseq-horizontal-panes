@@ -205,6 +205,94 @@ describe('HorizontalPanesController', () => {
     controller.destroy();
   });
 
+  it('resizes a pane from a forgiving target outside its right border', () => {
+    const { list } = installFixture();
+    const pane = document.createElement('div');
+    pane.className = 'sidebar-item';
+    setLeft(pane, 700);
+    list.append(pane);
+
+    const controller = new HorizontalPanesController(options);
+    controller.setEnabled(true);
+
+    const pointerDown = new MouseEvent('pointerdown', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 1387,
+      clientY: 100,
+      button: 0,
+    });
+    Object.defineProperty(pointerDown, 'pointerId', { value: 7 });
+    list.dispatchEvent(pointerDown);
+
+    expect(pointerDown.defaultPrevented).toBe(true);
+    expect(document.body.classList.contains('horizontal-panes-pane-resizing')).toBe(true);
+
+    const pointerMove = new MouseEvent('pointermove', {
+      bubbles: true,
+      cancelable: true,
+      clientX: 1507,
+      clientY: 100,
+      buttons: 1,
+    });
+    Object.defineProperty(pointerMove, 'pointerId', { value: 7 });
+    document.dispatchEvent(pointerMove);
+
+    expect(pointerMove.defaultPrevented).toBe(true);
+    expect(
+      pane.style.getPropertyValue('--horizontal-panes-pane-width-override')
+    ).toBe('800px');
+    expect(pane.classList.contains('horizontal-panes-manual-width')).toBe(true);
+
+    const pointerUp = new MouseEvent('pointerup', {
+      bubbles: true,
+      clientX: 1507,
+      clientY: 100,
+    });
+    Object.defineProperty(pointerUp, 'pointerId', { value: 7 });
+    document.dispatchEvent(pointerUp);
+
+    expect(document.body.classList.contains('horizontal-panes-pane-resizing')).toBe(false);
+    expect(
+      pane.style.getPropertyValue('--horizontal-panes-pane-width-override')
+    ).toBe('800px');
+
+    pane.dispatchEvent(
+      new MouseEvent('dblclick', {
+        bubbles: true,
+        cancelable: true,
+        clientX: 1387,
+        clientY: 100,
+      })
+    );
+
+    expect(
+      pane.style.getPropertyValue('--horizontal-panes-pane-width-override')
+    ).toBe('');
+    expect(pane.classList.contains('horizontal-panes-manual-width')).toBe(false);
+
+    controller.destroy();
+  });
+
+  it('cleans up session-only pane widths when horizontal mode is disabled', () => {
+    const { list } = installFixture();
+    const pane = document.createElement('div');
+    pane.className = 'sidebar-item horizontal-panes-manual-width';
+    pane.style.setProperty('--horizontal-panes-pane-width-override', '900px');
+    setLeft(pane, 700);
+    list.append(pane);
+
+    const controller = new HorizontalPanesController(options);
+    controller.setEnabled(true);
+    controller.setEnabled(false);
+
+    expect(
+      pane.style.getPropertyValue('--horizontal-panes-pane-width-override')
+    ).toBe('');
+    expect(pane.classList.contains('horizontal-panes-manual-width')).toBe(false);
+    controller.destroy();
+  });
+
   it('restores the last caret position when moving between pane editors', async () => {
     const { list } = installFixture();
     const main = document.querySelector<HTMLElement>('#left-container')!;

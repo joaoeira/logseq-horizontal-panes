@@ -26,6 +26,22 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
     scroll-snap-type: x proximity;
   }
 
+  body.horizontal-panes-active.horizontal-panes-pane-resizing #app-container {
+    scroll-behavior: auto;
+    scroll-snap-type: none !important;
+  }
+
+  body.horizontal-panes-pane-resize-target,
+  body.horizontal-panes-pane-resize-target * {
+    cursor: col-resize !important;
+  }
+
+  body.horizontal-panes-pane-resizing,
+  body.horizontal-panes-pane-resizing * {
+    cursor: col-resize !important;
+    user-select: none !important;
+  }
+
   body.horizontal-panes-active #app-container::-webkit-scrollbar {
     height: 10px;
   }
@@ -133,11 +149,23 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
     box-sizing: border-box;
     position: relative;
     display: flex !important;
-    flex: 0 0 var(--horizontal-panes-pane-width) !important;
+    flex: 0 0 var(
+      --horizontal-panes-pane-width-override,
+      var(--horizontal-panes-pane-width)
+    ) !important;
     align-self: flex-start !important;
-    width: var(--horizontal-panes-pane-width) !important;
-    min-width: var(--horizontal-panes-pane-width) !important;
-    max-width: var(--horizontal-panes-pane-width) !important;
+    width: var(
+      --horizontal-panes-pane-width-override,
+      var(--horizontal-panes-pane-width)
+    ) !important;
+    min-width: var(
+      --horizontal-panes-pane-width-override,
+      var(--horizontal-panes-pane-width)
+    ) !important;
+    max-width: var(
+      --horizontal-panes-pane-width-override,
+      var(--horizontal-panes-pane-width)
+    ) !important;
     height: calc(100vh - var(--horizontal-panes-header-height) - 46px) !important;
     min-height: 0 !important;
     max-height: calc(100vh - var(--horizontal-panes-header-height) - 46px) !important;
@@ -156,9 +184,13 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
 
   body.horizontal-panes-active
     .sidebar-item-list
-    > .sidebar-item.horizontal-panes-last-pane:not(.collapsed) {
+    > .sidebar-item.horizontal-panes-last-pane:not(.collapsed):not(.horizontal-panes-manual-width) {
     flex: 1 1 var(--horizontal-panes-pane-width) !important;
     max-width: var(--horizontal-panes-last-pane-max-width) !important;
+  }
+
+  body.horizontal-panes-active .sidebar-item-list > .sidebar-item.horizontal-panes-resize-target {
+    border-right-color: var(--ls-link-text-color, var(--ls-active-primary-color));
   }
 
   body.horizontal-panes-active .sidebar-item-list > .sidebar-item.horizontal-panes-active-pane {

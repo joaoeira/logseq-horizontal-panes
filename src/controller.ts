@@ -4,11 +4,19 @@ const BODY_CLASS = 'horizontal-panes-active';
 const SNAP_CLASS = 'horizontal-panes-snap';
 const ACTIVE_PANE_CLASS = 'horizontal-panes-active-pane';
 const LAST_PANE_CLASS = 'horizontal-panes-last-pane';
+const MANUAL_WIDTH_CLASS = 'horizontal-panes-manual-width';
+const RESIZE_TARGET_CLASS = 'horizontal-panes-resize-target';
+const RESIZE_TARGET_BODY_CLASS = 'horizontal-panes-pane-resize-target';
+const RESIZING_BODY_CLASS = 'horizontal-panes-pane-resizing';
 const SIDEBAR_LIST_SELECTOR = '.sidebar-item-list';
 const PANE_SELECTOR = ':scope > .sidebar-item';
 const APP_CONTAINER_SELECTOR = '#app-container';
 const MAIN_CONTAINER_SELECTOR = '#left-container';
 const BLOCK_SELECTOR = '.ls-block';
+const MIN_PANE_WIDTH_PX = 360;
+const MAX_PANE_WIDTH_PX = 1600;
+const RESIZE_TARGET_INSIDE_PX = 4;
+const RESIZE_TARGET_OUTSIDE_PX = 8;
 const EDITOR_SELECTOR = [
   '.block-editor textarea',
   'textarea.block-editor',
@@ -28,6 +36,14 @@ type EditorBookmark = {
   blockId: string | null;
   selectionStart: number | null;
   selectionEnd: number | null;
+};
+
+type PaneResizeState = {
+  pane: HTMLElement;
+  pointerId: number;
+  startClientX: number;
+  startWidth: number;
+  captureTarget: Element | null;
 };
 
 export type HorizontalPanesOptions = {
@@ -56,6 +72,8 @@ export class HorizontalPanesController {
   private pendingOutgoingCommit: Promise<void> | null = null;
   private editorRestoreGeneration = 0;
   private editorBookmarks = new WeakMap<HTMLElement, EditorBookmark>();
+  private resizeTargetPane: HTMLElement | null = null;
+  private paneResize: PaneResizeState | null = null;
 
   constructor(options: HorizontalPanesOptions, host: HorizontalPanesHost = {}) {
     this.options = options;
@@ -179,9 +197,17 @@ export class HorizontalPanesController {
       passive: false,
     });
     this.getDocument().addEventListener('pointerdown', this.handlePointerDown, true);
+    this.getDocument().addEventListener('pointermove', this.handlePointerMove, {
+      capture: true,
+      passive: false,
+    });
+    this.getDocument().addEventListener('pointerup', this.handlePointerUp, true);
+    this.getDocument().addEventListener('pointercancel', this.handlePointerCancel, true);
+    this.getDocument().addEventListener('dblclick', this.handleDoubleClick, true);
     this.getDocument().addEventListener('focusin', this.handleFocusIn, true);
     this.getDocument().addEventListener('focusout', this.handleFocusOut, true);
     this.getDocument().addEventListener('keydown', this.handleKeyDown, true);
+    this.getWindow().addEventListener('blur', this.handleWindowBlur);
 
     this.ensureSidebarList(false);
     this.sidebarPoll = window.setInterval(() => this.ensureSidebarList(true), 400);
@@ -189,7 +215,14 @@ export class HorizontalPanesController {
 
   private deactivate(): void {
     const document = this.getDocument();
-    document.body.classList.remove(BODY_CLASS, SNAP_CLASS);
+    this.finishPaneResize();
+    this.setResizeTarget(null);
+    document.body.classList.remove(
+      BODY_CLASS,
+      SNAP_CLASS,
+      RESIZE_TARGET_BODY_CLASS,
+      RESIZING_BODY_CLASS
+    );
     document.body.style.removeProperty('--horizontal-panes-main-width');
     document.body.style.removeProperty('--horizontal-panes-pane-width');
     document.body.style.removeProperty('--horizontal-panes-last-pane-max-width');
@@ -197,9 +230,14 @@ export class HorizontalPanesController {
     document.body.style.removeProperty('--horizontal-panes-main-gap');
     document.removeEventListener('wheel', this.handleWheel, true);
     document.removeEventListener('pointerdown', this.handlePointerDown, true);
+    document.removeEventListener('pointermove', this.handlePointerMove, true);
+    document.removeEventListener('pointerup', this.handlePointerUp, true);
+    document.removeEventListener('pointercancel', this.handlePointerCancel, true);
+    document.removeEventListener('dblclick', this.handleDoubleClick, true);
     document.removeEventListener('focusin', this.handleFocusIn, true);
     document.removeEventListener('focusout', this.handleFocusOut, true);
     document.removeEventListener('keydown', this.handleKeyDown, true);
+    this.getWindow().removeEventListener('blur', this.handleWindowBlur);
 
     if (this.sidebarPoll !== null) {
       window.clearInterval(this.sidebarPoll);
@@ -260,12 +298,20 @@ export class HorizontalPanesController {
   }
 
   private disconnectSidebarList(): void {
+    this.finishPaneResize();
+    this.setResizeTarget(null);
     this.sidebarObserver?.disconnect();
     this.sidebarObserver = null;
     this.paneScrollListeners.forEach((pane) => {
       pane.removeEventListener('scroll', this.handlePaneScroll);
-      pane.classList.remove(ACTIVE_PANE_CLASS, LAST_PANE_CLASS);
+      pane.classList.remove(
+        ACTIVE_PANE_CLASS,
+        LAST_PANE_CLASS,
+        MANUAL_WIDTH_CLASS,
+        RESIZE_TARGET_CLASS
+      );
       pane.style.removeProperty('order');
+      pane.style.removeProperty('--horizontal-panes-pane-width-override');
     });
     this.paneScrollListeners.clear();
     this.paneOrder = [];
@@ -290,11 +336,23 @@ export class HorizontalPanesController {
 
     const nativePanes = this.getNativePanes();
     const currentPanes = new Set(nativePanes);
+    if (this.paneResize && !currentPanes.has(this.paneResize.pane)) {
+      this.finishPaneResize();
+    }
+    if (this.resizeTargetPane && !currentPanes.has(this.resizeTargetPane)) {
+      this.setResizeTarget(null);
+    }
     this.paneScrollListeners.forEach((pane) => {
       if (currentPanes.has(pane)) return;
       pane.removeEventListener('scroll', this.handlePaneScroll);
-      pane.classList.remove(ACTIVE_PANE_CLASS, LAST_PANE_CLASS);
+      pane.classList.remove(
+        ACTIVE_PANE_CLASS,
+        LAST_PANE_CLASS,
+        MANUAL_WIDTH_CLASS,
+        RESIZE_TARGET_CLASS
+      );
       pane.style.removeProperty('order');
+      pane.style.removeProperty('--horizontal-panes-pane-width-override');
       this.paneScrollListeners.delete(pane);
     });
     const retainedOrder = this.paneOrder.filter(
@@ -395,6 +453,14 @@ export class HorizontalPanesController {
   };
 
   private readonly handlePointerDown = (event: PointerEvent): void => {
+    if (!this.enabled || event.button !== 0) return;
+
+    const resizePane = this.findPaneResizeTarget(event.clientX, event.clientY);
+    if (resizePane) {
+      this.beginPaneResize(resizePane, event);
+      return;
+    }
+
     const target = event.target;
     if (!(target instanceof this.getWindow().Element)) return;
     const targetElement = target as Element;
@@ -411,6 +477,141 @@ export class HorizontalPanesController {
       this.clearActivePane();
     }
   };
+
+  private readonly handlePointerMove = (event: PointerEvent): void => {
+    if (!this.enabled) return;
+
+    if (!this.paneResize) {
+      this.setResizeTarget(this.findPaneResizeTarget(event.clientX, event.clientY));
+      return;
+    }
+    if (event.pointerId !== this.paneResize.pointerId) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    const nextWidth = Math.min(
+      MAX_PANE_WIDTH_PX,
+      Math.max(
+        MIN_PANE_WIDTH_PX,
+        Math.round(
+          this.paneResize.startWidth +
+            event.clientX -
+            this.paneResize.startClientX
+        )
+      )
+    );
+    this.paneResize.pane.style.setProperty(
+      '--horizontal-panes-pane-width-override',
+      `${nextWidth}px`
+    );
+    this.paneResize.pane.classList.add(MANUAL_WIDTH_CLASS);
+  };
+
+  private readonly handlePointerUp = (event: PointerEvent): void => {
+    if (!this.paneResize || event.pointerId !== this.paneResize.pointerId) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    this.finishPaneResize();
+    this.setResizeTarget(this.findPaneResizeTarget(event.clientX, event.clientY));
+  };
+
+  private readonly handlePointerCancel = (event: PointerEvent): void => {
+    if (!this.paneResize || event.pointerId !== this.paneResize.pointerId) return;
+    this.finishPaneResize();
+    this.setResizeTarget(null);
+  };
+
+  private readonly handleDoubleClick = (event: MouseEvent): void => {
+    if (!this.enabled) return;
+    const pane = this.findPaneResizeTarget(event.clientX, event.clientY);
+    if (!pane) return;
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    pane.style.removeProperty('--horizontal-panes-pane-width-override');
+    pane.classList.remove(MANUAL_WIDTH_CLASS);
+  };
+
+  private readonly handleWindowBlur = (): void => {
+    this.finishPaneResize();
+    this.setResizeTarget(null);
+  };
+
+  private beginPaneResize(pane: HTMLElement, event: PointerEvent): void {
+    event.preventDefault();
+    event.stopImmediatePropagation();
+
+    const captureTarget =
+      event.target instanceof this.getWindow().Element
+        ? (event.target as Element)
+        : null;
+    try {
+      captureTarget?.setPointerCapture(event.pointerId);
+    } catch {
+      // Document-level listeners still keep the drag working if capture is unavailable.
+    }
+
+    this.paneResize = {
+      pane,
+      pointerId: event.pointerId,
+      startClientX: event.clientX,
+      startWidth: pane.getBoundingClientRect().width,
+      captureTarget,
+    };
+    this.setResizeTarget(pane);
+    this.getDocument().body.classList.add(RESIZING_BODY_CLASS);
+  }
+
+  private finishPaneResize(): void {
+    const resize = this.paneResize;
+    if (!resize) return;
+
+    try {
+      if (resize.captureTarget?.hasPointerCapture(resize.pointerId)) {
+        resize.captureTarget.releasePointerCapture(resize.pointerId);
+      }
+    } catch {
+      // Pointer capture can already be gone after a native cancellation.
+    }
+
+    this.paneResize = null;
+    this.getDocument().body.classList.remove(RESIZING_BODY_CLASS);
+  }
+
+  private findPaneResizeTarget(clientX: number, clientY: number): HTMLElement | null {
+    let nearestPane: HTMLElement | null = null;
+    let nearestDistance = Number.POSITIVE_INFINITY;
+
+    for (const pane of this.getPanes()) {
+      if (pane.classList.contains('collapsed')) continue;
+      const rect = pane.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) continue;
+      if (clientY < rect.top || clientY > rect.bottom) continue;
+      if (
+        clientX < rect.right - RESIZE_TARGET_INSIDE_PX ||
+        clientX > rect.right + RESIZE_TARGET_OUTSIDE_PX
+      ) {
+        continue;
+      }
+
+      const distance = Math.abs(clientX - rect.right);
+      if (distance < nearestDistance) {
+        nearestPane = pane;
+        nearestDistance = distance;
+      }
+    }
+
+    return nearestPane;
+  }
+
+  private setResizeTarget(pane: HTMLElement | null): void {
+    if (pane === this.resizeTargetPane) return;
+    this.resizeTargetPane?.classList.remove(RESIZE_TARGET_CLASS);
+    this.resizeTargetPane = pane;
+    pane?.classList.add(RESIZE_TARGET_CLASS);
+    this.getDocument().body.classList.toggle(RESIZE_TARGET_BODY_CLASS, pane !== null);
+  }
 
   private readonly handleFocusIn = (event: FocusEvent): void => {
     const target = event.target;

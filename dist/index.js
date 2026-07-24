@@ -16,11 +16,19 @@
   var SNAP_CLASS = "horizontal-panes-snap";
   var ACTIVE_PANE_CLASS = "horizontal-panes-active-pane";
   var LAST_PANE_CLASS = "horizontal-panes-last-pane";
+  var MANUAL_WIDTH_CLASS = "horizontal-panes-manual-width";
+  var RESIZE_TARGET_CLASS = "horizontal-panes-resize-target";
+  var RESIZE_TARGET_BODY_CLASS = "horizontal-panes-pane-resize-target";
+  var RESIZING_BODY_CLASS = "horizontal-panes-pane-resizing";
   var SIDEBAR_LIST_SELECTOR = ".sidebar-item-list";
   var PANE_SELECTOR = ":scope > .sidebar-item";
   var APP_CONTAINER_SELECTOR = "#app-container";
   var MAIN_CONTAINER_SELECTOR = "#left-container";
   var BLOCK_SELECTOR = ".ls-block";
+  var MIN_PANE_WIDTH_PX = 360;
+  var MAX_PANE_WIDTH_PX = 1600;
+  var RESIZE_TARGET_INSIDE_PX = 4;
+  var RESIZE_TARGET_OUTSIDE_PX = 8;
   var EDITOR_SELECTOR = [
     ".block-editor textarea",
     "textarea.block-editor",
@@ -48,6 +56,8 @@
     pendingOutgoingCommit = null;
     editorRestoreGeneration = 0;
     editorBookmarks = /* @__PURE__ */ new WeakMap();
+    resizeTargetPane = null;
+    paneResize = null;
     constructor(options, host = {}) {
       this.options = options;
       this.host = host;
@@ -149,15 +159,30 @@
         passive: false
       });
       this.getDocument().addEventListener("pointerdown", this.handlePointerDown, true);
+      this.getDocument().addEventListener("pointermove", this.handlePointerMove, {
+        capture: true,
+        passive: false
+      });
+      this.getDocument().addEventListener("pointerup", this.handlePointerUp, true);
+      this.getDocument().addEventListener("pointercancel", this.handlePointerCancel, true);
+      this.getDocument().addEventListener("dblclick", this.handleDoubleClick, true);
       this.getDocument().addEventListener("focusin", this.handleFocusIn, true);
       this.getDocument().addEventListener("focusout", this.handleFocusOut, true);
       this.getDocument().addEventListener("keydown", this.handleKeyDown, true);
+      this.getWindow().addEventListener("blur", this.handleWindowBlur);
       this.ensureSidebarList(false);
       this.sidebarPoll = window.setInterval(() => this.ensureSidebarList(true), 400);
     }
     deactivate() {
       const document = this.getDocument();
-      document.body.classList.remove(BODY_CLASS, SNAP_CLASS);
+      this.finishPaneResize();
+      this.setResizeTarget(null);
+      document.body.classList.remove(
+        BODY_CLASS,
+        SNAP_CLASS,
+        RESIZE_TARGET_BODY_CLASS,
+        RESIZING_BODY_CLASS
+      );
       document.body.style.removeProperty("--horizontal-panes-main-width");
       document.body.style.removeProperty("--horizontal-panes-pane-width");
       document.body.style.removeProperty("--horizontal-panes-last-pane-max-width");
@@ -165,9 +190,14 @@
       document.body.style.removeProperty("--horizontal-panes-main-gap");
       document.removeEventListener("wheel", this.handleWheel, true);
       document.removeEventListener("pointerdown", this.handlePointerDown, true);
+      document.removeEventListener("pointermove", this.handlePointerMove, true);
+      document.removeEventListener("pointerup", this.handlePointerUp, true);
+      document.removeEventListener("pointercancel", this.handlePointerCancel, true);
+      document.removeEventListener("dblclick", this.handleDoubleClick, true);
       document.removeEventListener("focusin", this.handleFocusIn, true);
       document.removeEventListener("focusout", this.handleFocusOut, true);
       document.removeEventListener("keydown", this.handleKeyDown, true);
+      this.getWindow().removeEventListener("blur", this.handleWindowBlur);
       if (this.sidebarPoll !== null) {
         window.clearInterval(this.sidebarPoll);
         this.sidebarPoll = null;
@@ -218,12 +248,20 @@
       }
     }
     disconnectSidebarList() {
+      this.finishPaneResize();
+      this.setResizeTarget(null);
       this.sidebarObserver?.disconnect();
       this.sidebarObserver = null;
       this.paneScrollListeners.forEach((pane) => {
         pane.removeEventListener("scroll", this.handlePaneScroll);
-        pane.classList.remove(ACTIVE_PANE_CLASS, LAST_PANE_CLASS);
+        pane.classList.remove(
+          ACTIVE_PANE_CLASS,
+          LAST_PANE_CLASS,
+          MANUAL_WIDTH_CLASS,
+          RESIZE_TARGET_CLASS
+        );
         pane.style.removeProperty("order");
+        pane.style.removeProperty("--horizontal-panes-pane-width-override");
       });
       this.paneScrollListeners.clear();
       this.paneOrder = [];
@@ -243,11 +281,23 @@
       }
       const nativePanes = this.getNativePanes();
       const currentPanes = new Set(nativePanes);
+      if (this.paneResize && !currentPanes.has(this.paneResize.pane)) {
+        this.finishPaneResize();
+      }
+      if (this.resizeTargetPane && !currentPanes.has(this.resizeTargetPane)) {
+        this.setResizeTarget(null);
+      }
       this.paneScrollListeners.forEach((pane) => {
         if (currentPanes.has(pane)) return;
         pane.removeEventListener("scroll", this.handlePaneScroll);
-        pane.classList.remove(ACTIVE_PANE_CLASS, LAST_PANE_CLASS);
+        pane.classList.remove(
+          ACTIVE_PANE_CLASS,
+          LAST_PANE_CLASS,
+          MANUAL_WIDTH_CLASS,
+          RESIZE_TARGET_CLASS
+        );
         pane.style.removeProperty("order");
+        pane.style.removeProperty("--horizontal-panes-pane-width-override");
         this.paneScrollListeners.delete(pane);
       });
       const retainedOrder = this.paneOrder.filter(
@@ -322,6 +372,12 @@
       appContainer.scrollLeft += event.deltaY;
     };
     handlePointerDown = (event) => {
+      if (!this.enabled || event.button !== 0) return;
+      const resizePane = this.findPaneResizeTarget(event.clientX, event.clientY);
+      if (resizePane) {
+        this.beginPaneResize(resizePane, event);
+        return;
+      }
       const target = event.target;
       if (!(target instanceof this.getWindow().Element)) return;
       const targetElement = target;
@@ -336,6 +392,111 @@
         this.clearActivePane();
       }
     };
+    handlePointerMove = (event) => {
+      if (!this.enabled) return;
+      if (!this.paneResize) {
+        this.setResizeTarget(this.findPaneResizeTarget(event.clientX, event.clientY));
+        return;
+      }
+      if (event.pointerId !== this.paneResize.pointerId) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const nextWidth = Math.min(
+        MAX_PANE_WIDTH_PX,
+        Math.max(
+          MIN_PANE_WIDTH_PX,
+          Math.round(
+            this.paneResize.startWidth + event.clientX - this.paneResize.startClientX
+          )
+        )
+      );
+      this.paneResize.pane.style.setProperty(
+        "--horizontal-panes-pane-width-override",
+        `${nextWidth}px`
+      );
+      this.paneResize.pane.classList.add(MANUAL_WIDTH_CLASS);
+    };
+    handlePointerUp = (event) => {
+      if (!this.paneResize || event.pointerId !== this.paneResize.pointerId) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.finishPaneResize();
+      this.setResizeTarget(this.findPaneResizeTarget(event.clientX, event.clientY));
+    };
+    handlePointerCancel = (event) => {
+      if (!this.paneResize || event.pointerId !== this.paneResize.pointerId) return;
+      this.finishPaneResize();
+      this.setResizeTarget(null);
+    };
+    handleDoubleClick = (event) => {
+      if (!this.enabled) return;
+      const pane = this.findPaneResizeTarget(event.clientX, event.clientY);
+      if (!pane) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      pane.style.removeProperty("--horizontal-panes-pane-width-override");
+      pane.classList.remove(MANUAL_WIDTH_CLASS);
+    };
+    handleWindowBlur = () => {
+      this.finishPaneResize();
+      this.setResizeTarget(null);
+    };
+    beginPaneResize(pane, event) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const captureTarget = event.target instanceof this.getWindow().Element ? event.target : null;
+      try {
+        captureTarget?.setPointerCapture(event.pointerId);
+      } catch {
+      }
+      this.paneResize = {
+        pane,
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startWidth: pane.getBoundingClientRect().width,
+        captureTarget
+      };
+      this.setResizeTarget(pane);
+      this.getDocument().body.classList.add(RESIZING_BODY_CLASS);
+    }
+    finishPaneResize() {
+      const resize = this.paneResize;
+      if (!resize) return;
+      try {
+        if (resize.captureTarget?.hasPointerCapture(resize.pointerId)) {
+          resize.captureTarget.releasePointerCapture(resize.pointerId);
+        }
+      } catch {
+      }
+      this.paneResize = null;
+      this.getDocument().body.classList.remove(RESIZING_BODY_CLASS);
+    }
+    findPaneResizeTarget(clientX, clientY) {
+      let nearestPane = null;
+      let nearestDistance = Number.POSITIVE_INFINITY;
+      for (const pane of this.getPanes()) {
+        if (pane.classList.contains("collapsed")) continue;
+        const rect = pane.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        if (clientY < rect.top || clientY > rect.bottom) continue;
+        if (clientX < rect.right - RESIZE_TARGET_INSIDE_PX || clientX > rect.right + RESIZE_TARGET_OUTSIDE_PX) {
+          continue;
+        }
+        const distance = Math.abs(clientX - rect.right);
+        if (distance < nearestDistance) {
+          nearestPane = pane;
+          nearestDistance = distance;
+        }
+      }
+      return nearestPane;
+    }
+    setResizeTarget(pane) {
+      if (pane === this.resizeTargetPane) return;
+      this.resizeTargetPane?.classList.remove(RESIZE_TARGET_CLASS);
+      this.resizeTargetPane = pane;
+      pane?.classList.add(RESIZE_TARGET_CLASS);
+      this.getDocument().body.classList.toggle(RESIZE_TARGET_BODY_CLASS, pane !== null);
+    }
     handleFocusIn = (event) => {
       const target = event.target;
       if (!(target instanceof this.getWindow().Element)) return;
@@ -609,6 +770,22 @@
     scroll-snap-type: x proximity;
   }
 
+  body.horizontal-panes-active.horizontal-panes-pane-resizing #app-container {
+    scroll-behavior: auto;
+    scroll-snap-type: none !important;
+  }
+
+  body.horizontal-panes-pane-resize-target,
+  body.horizontal-panes-pane-resize-target * {
+    cursor: col-resize !important;
+  }
+
+  body.horizontal-panes-pane-resizing,
+  body.horizontal-panes-pane-resizing * {
+    cursor: col-resize !important;
+    user-select: none !important;
+  }
+
   body.horizontal-panes-active #app-container::-webkit-scrollbar {
     height: 10px;
   }
@@ -716,11 +893,23 @@
     box-sizing: border-box;
     position: relative;
     display: flex !important;
-    flex: 0 0 var(--horizontal-panes-pane-width) !important;
+    flex: 0 0 var(
+      --horizontal-panes-pane-width-override,
+      var(--horizontal-panes-pane-width)
+    ) !important;
     align-self: flex-start !important;
-    width: var(--horizontal-panes-pane-width) !important;
-    min-width: var(--horizontal-panes-pane-width) !important;
-    max-width: var(--horizontal-panes-pane-width) !important;
+    width: var(
+      --horizontal-panes-pane-width-override,
+      var(--horizontal-panes-pane-width)
+    ) !important;
+    min-width: var(
+      --horizontal-panes-pane-width-override,
+      var(--horizontal-panes-pane-width)
+    ) !important;
+    max-width: var(
+      --horizontal-panes-pane-width-override,
+      var(--horizontal-panes-pane-width)
+    ) !important;
     height: calc(100vh - var(--horizontal-panes-header-height) - 46px) !important;
     min-height: 0 !important;
     max-height: calc(100vh - var(--horizontal-panes-header-height) - 46px) !important;
@@ -739,9 +928,13 @@
 
   body.horizontal-panes-active
     .sidebar-item-list
-    > .sidebar-item.horizontal-panes-last-pane:not(.collapsed) {
+    > .sidebar-item.horizontal-panes-last-pane:not(.collapsed):not(.horizontal-panes-manual-width) {
     flex: 1 1 var(--horizontal-panes-pane-width) !important;
     max-width: var(--horizontal-panes-last-pane-max-width) !important;
+  }
+
+  body.horizontal-panes-active .sidebar-item-list > .sidebar-item.horizontal-panes-resize-target {
+    border-right-color: var(--ls-link-text-color, var(--ls-active-primary-color));
   }
 
   body.horizontal-panes-active .sidebar-item-list > .sidebar-item.horizontal-panes-active-pane {

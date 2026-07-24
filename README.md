@@ -51,6 +51,13 @@ The main-page width, sidebar-pane width, the gap after the main page, the gap
 between sidebar panes, and optional scroll snapping are independently
 configurable in the plugin settings.
 
+Drag the right border of any expanded sidebar pane to give it an individual
+width for the current session. The resize target extends into the surrounding
+gap, so it does not require pixel-perfect pointing or interfere with the pane's
+vertical scrollbar. Double-click the same border to restore the configured
+default pane width. Manual widths follow panes when they are reordered and are
+discarded when horizontal mode is disabled or Logseq is restarted.
+
 ## Deliberate constraints
 
 This proof of concept never reorders or reparents Logseq's React-owned DOM

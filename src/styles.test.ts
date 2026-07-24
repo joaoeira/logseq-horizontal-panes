@@ -40,10 +40,22 @@ describe('horizontal panes styles', () => {
       /#right-sidebar\.open[\s\S]*?min-width:\s*max\(\s*0px,\s*calc\(\s*100vw\s*-\s*var\(--horizontal-panes-main-width\)\s*\)\s*\)/
     );
     expect(HORIZONTAL_PANES_STYLES).toMatch(
-      /\.sidebar-item\.horizontal-panes-last-pane:not\(\.collapsed\)[\s\S]*?flex:\s*1\s+1\s+var\(--horizontal-panes-pane-width\)\s*!important/
+      /\.sidebar-item\.horizontal-panes-last-pane:not\(\.collapsed\):not\(\.horizontal-panes-manual-width\)[\s\S]*?flex:\s*1\s+1\s+var\(--horizontal-panes-pane-width\)\s*!important/
     );
     expect(HORIZONTAL_PANES_STYLES).toMatch(
-      /\.sidebar-item\.horizontal-panes-last-pane:not\(\.collapsed\)[\s\S]*?max-width:\s*var\(--horizontal-panes-last-pane-max-width\)\s*!important/
+      /\.sidebar-item\.horizontal-panes-last-pane:not\(\.collapsed\):not\(\.horizontal-panes-manual-width\)[\s\S]*?max-width:\s*var\(--horizontal-panes-last-pane-max-width\)\s*!important/
+    );
+  });
+
+  it('uses an individual width override and exposes resize feedback', () => {
+    expect(HORIZONTAL_PANES_STYLES).toMatch(
+      /\.sidebar-item\s*\{[\s\S]*?flex:\s*0\s+0\s+var\(\s*--horizontal-panes-pane-width-override,\s*var\(--horizontal-panes-pane-width\)\s*\)\s*!important/
+    );
+    expect(HORIZONTAL_PANES_STYLES).toMatch(
+      /body\.horizontal-panes-pane-resize-target[\s\S]*?cursor:\s*col-resize\s*!important/
+    );
+    expect(HORIZONTAL_PANES_STYLES).toMatch(
+      /body\.horizontal-panes-pane-resizing[\s\S]*?user-select:\s*none\s*!important/
     );
   });
 });
