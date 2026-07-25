@@ -42,9 +42,10 @@ run `Horizontal Panes: Toggle mode` from the command palette to switch it off.
 - `Horizontal Panes: Move focused pane left` (`Cmd/Ctrl+Shift+[`)
 - `Horizontal Panes: Move focused pane right` (`Cmd/Ctrl+Shift+]`)
 
-All of these commands can be assigned different shortcuts through Logseq's
-keyboard-shortcut settings. The Shift-bracket combinations above remain the
-plugin's direct default pane-reordering controls.
+All of these commands appear in Logseq's keymap settings under the plugin
+category and can be assigned different shortcuts there. Most start unbound;
+the Shift-bracket combinations above are the default pane-reordering bindings
+and can also be changed or removed through Logseq.
 
 The focus commands enter edit mode: the plugin remembers the last edited block
 and caret selection in each pane and restores them when returning. A pane that

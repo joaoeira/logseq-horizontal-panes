@@ -8,6 +8,7 @@ import {
   type HorizontalPanesOptions,
   type PaneReferenceTarget,
 } from './controller';
+import { registerHorizontalPaneCommands } from './commands';
 import { HORIZONTAL_PANES_STYLES } from './styles';
 
 declare const logseq: LSPluginUser;
@@ -238,69 +239,17 @@ async function main(): Promise<void> {
     `,
   });
 
-  logseq.App.registerCommandPalette(
-    {
-      key: 'horizontal-panes.toggle',
-      label: 'Horizontal Panes: Toggle mode',
-    },
-    toggleMode
-  );
-  logseq.App.registerCommandPalette(
-    {
-      key: 'horizontal-panes.open-current',
-      label: 'Horizontal Panes: Open current page as pane',
-    },
-    openCurrentPageInPane
-  );
-  logseq.App.registerCommandPalette(
-    {
-      key: 'horizontal-panes.focus-main',
-      label: 'Horizontal Panes: Focus main page',
-    },
-    () => controller.focusMain()
-  );
-  logseq.App.registerCommandPalette(
-    {
-      key: 'horizontal-panes.focus-next',
-      label: 'Horizontal Panes: Focus pane right',
-    },
-    () => controller.focusAdjacentPane(1)
-  );
-  logseq.App.registerCommandPalette(
-    {
-      key: 'horizontal-panes.focus-previous',
-      label: 'Horizontal Panes: Focus pane left',
-    },
-    () => controller.focusAdjacentPane(-1)
-  );
-  logseq.App.registerCommandPalette(
-    {
-      key: 'horizontal-panes.history-back',
-      label: 'Horizontal Panes: Back in focused pane',
-    },
-    () => controller.navigateActivePaneHistory('back')
-  );
-  logseq.App.registerCommandPalette(
-    {
-      key: 'horizontal-panes.history-forward',
-      label: 'Horizontal Panes: Forward in focused pane',
-    },
-    () => controller.navigateActivePaneHistory('forward')
-  );
-  logseq.App.registerCommandPalette(
-    {
-      key: 'horizontal-panes.move-left',
-      label: 'Horizontal Panes: Move focused pane left',
-    },
-    () => controller.moveActivePane(-1)
-  );
-  logseq.App.registerCommandPalette(
-    {
-      key: 'horizontal-panes.move-right',
-      label: 'Horizontal Panes: Move focused pane right',
-    },
-    () => controller.moveActivePane(1)
-  );
+  registerHorizontalPaneCommands(logseq.App, {
+    toggleMode,
+    openCurrentPage: openCurrentPageInPane,
+    focusMain: () => controller.focusMain(),
+    focusNext: () => controller.focusAdjacentPane(1),
+    focusPrevious: () => controller.focusAdjacentPane(-1),
+    historyBack: () => controller.navigateActivePaneHistory('back'),
+    historyForward: () => controller.navigateActivePaneHistory('forward'),
+    moveLeft: () => controller.moveActivePane(-1),
+    moveRight: () => controller.moveActivePane(1),
+  });
 
   logseq.beforeunload(async () => {
     controller.destroy();

@@ -1329,8 +1329,8 @@ describe('HorizontalPanesController', () => {
     controller.destroy();
   });
 
-  it('leaves plain bracket shortcuts to Logseq and uses Shift to reorder', () => {
-    const { list, scrollTo } = installFixture();
+  it('leaves bracket shortcuts to Logseq command registration', () => {
+    const { list } = installFixture();
     const newestPane = document.createElement('div');
     const oldestPane = document.createElement('div');
     newestPane.className = 'sidebar-item';
@@ -1364,10 +1364,6 @@ describe('HorizontalPanesController', () => {
     expect(logseqForward.defaultPrevented).toBe(false);
     expect(list.querySelector('.horizontal-panes-active-pane')).toBeNull();
 
-    controller.focusAdjacentPane(1);
-    expect(scrollTo).toHaveBeenLastCalledWith({ left: 490, behavior: 'smooth' });
-    expect(list.querySelector('.horizontal-panes-active-pane')).toBe(oldestPane);
-
     const moveRight = new KeyboardEvent('keydown', {
       code: 'BracketRight',
       key: '}',
@@ -1378,9 +1374,9 @@ describe('HorizontalPanesController', () => {
     });
     document.dispatchEvent(moveRight);
 
-    expect(moveRight.defaultPrevented).toBe(true);
-    expect(oldestPane.style.order).toBe('1');
-    expect(newestPane.style.order).toBe('0');
+    expect(moveRight.defaultPrevented).toBe(false);
+    expect(oldestPane.style.order).toBe('0');
+    expect(newestPane.style.order).toBe('1');
     controller.destroy();
   });
 });

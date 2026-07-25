@@ -288,7 +288,6 @@ export class HorizontalPanesController {
     this.getDocument().addEventListener('dblclick', this.handleDoubleClick, true);
     this.getDocument().addEventListener('focusin', this.handleFocusIn, true);
     this.getDocument().addEventListener('focusout', this.handleFocusOut, true);
-    this.getDocument().addEventListener('keydown', this.handleKeyDown, true);
     this.getWindow().addEventListener('blur', this.handleWindowBlur);
 
     this.ensureSidebarList(false);
@@ -320,7 +319,6 @@ export class HorizontalPanesController {
     document.removeEventListener('dblclick', this.handleDoubleClick, true);
     document.removeEventListener('focusin', this.handleFocusIn, true);
     document.removeEventListener('focusout', this.handleFocusOut, true);
-    document.removeEventListener('keydown', this.handleKeyDown, true);
     this.getWindow().removeEventListener('blur', this.handleWindowBlur);
 
     if (this.sidebarPoll !== null) {
@@ -1541,26 +1539,6 @@ export class HorizontalPanesController {
     const target = event.target;
     if (!(target instanceof this.getWindow().HTMLElement)) return;
     this.rememberEditor(target);
-  };
-
-  private readonly handleKeyDown = (event: KeyboardEvent): void => {
-    const isApplePlatform = /Mac|iPhone|iPad/.test(this.getWindow().navigator.platform);
-    const modifierPressed = event.metaKey || (!isApplePlatform && event.ctrlKey);
-    if (!this.enabled || event.altKey || !event.shiftKey || !modifierPressed) {
-      return;
-    }
-
-    const direction =
-      event.code === 'BracketLeft'
-        ? -1
-        : event.code === 'BracketRight'
-          ? 1
-          : null;
-    if (direction === null) return;
-
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    this.moveActivePane(direction);
   };
 
   private rememberCurrentEditor(): void {

@@ -190,7 +190,6 @@
       this.getDocument().addEventListener("dblclick", this.handleDoubleClick, true);
       this.getDocument().addEventListener("focusin", this.handleFocusIn, true);
       this.getDocument().addEventListener("focusout", this.handleFocusOut, true);
-      this.getDocument().addEventListener("keydown", this.handleKeyDown, true);
       this.getWindow().addEventListener("blur", this.handleWindowBlur);
       this.ensureSidebarList(false);
       this.sidebarPoll = window.setInterval(() => this.ensureSidebarList(true), 400);
@@ -220,7 +219,6 @@
       document.removeEventListener("dblclick", this.handleDoubleClick, true);
       document.removeEventListener("focusin", this.handleFocusIn, true);
       document.removeEventListener("focusout", this.handleFocusOut, true);
-      document.removeEventListener("keydown", this.handleKeyDown, true);
       this.getWindow().removeEventListener("blur", this.handleWindowBlur);
       if (this.sidebarPoll !== null) {
         window.clearInterval(this.sidebarPoll);
@@ -1123,18 +1121,6 @@
       if (!(target instanceof this.getWindow().HTMLElement)) return;
       this.rememberEditor(target);
     };
-    handleKeyDown = (event) => {
-      const isApplePlatform = /Mac|iPhone|iPad/.test(this.getWindow().navigator.platform);
-      const modifierPressed = event.metaKey || !isApplePlatform && event.ctrlKey;
-      if (!this.enabled || event.altKey || !event.shiftKey || !modifierPressed) {
-        return;
-      }
-      const direction = event.code === "BracketLeft" ? -1 : event.code === "BracketRight" ? 1 : null;
-      if (direction === null) return;
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      this.moveActivePane(direction);
-    };
     rememberCurrentEditor() {
       const activeElement = this.getDocument().activeElement;
       if (!(activeElement instanceof this.getWindow().HTMLElement)) return;
@@ -1348,6 +1334,94 @@
       return parent;
     }
   };
+
+  // src/commands.ts
+  var UNBOUND_KEYBINDING = {
+    mode: "global",
+    binding: []
+  };
+  var MOVE_LEFT_KEYBINDING = {
+    mode: "global",
+    binding: "mod+shift+open-square-bracket"
+  };
+  var MOVE_RIGHT_KEYBINDING = {
+    mode: "global",
+    binding: "mod+shift+close-square-bracket"
+  };
+  function registerHorizontalPaneCommands(app, actions) {
+    app.registerCommandPalette(
+      {
+        key: "horizontal-panes.toggle",
+        label: "Horizontal Panes: Toggle mode",
+        keybinding: UNBOUND_KEYBINDING
+      },
+      actions.toggleMode
+    );
+    app.registerCommandPalette(
+      {
+        key: "horizontal-panes.open-current",
+        label: "Horizontal Panes: Open current page as pane",
+        keybinding: UNBOUND_KEYBINDING
+      },
+      actions.openCurrentPage
+    );
+    app.registerCommandPalette(
+      {
+        key: "horizontal-panes.focus-main",
+        label: "Horizontal Panes: Focus main page",
+        keybinding: UNBOUND_KEYBINDING
+      },
+      actions.focusMain
+    );
+    app.registerCommandPalette(
+      {
+        key: "horizontal-panes.focus-next",
+        label: "Horizontal Panes: Focus pane right",
+        keybinding: UNBOUND_KEYBINDING
+      },
+      actions.focusNext
+    );
+    app.registerCommandPalette(
+      {
+        key: "horizontal-panes.focus-previous",
+        label: "Horizontal Panes: Focus pane left",
+        keybinding: UNBOUND_KEYBINDING
+      },
+      actions.focusPrevious
+    );
+    app.registerCommandPalette(
+      {
+        key: "horizontal-panes.history-back",
+        label: "Horizontal Panes: Back in focused pane",
+        keybinding: UNBOUND_KEYBINDING
+      },
+      actions.historyBack
+    );
+    app.registerCommandPalette(
+      {
+        key: "horizontal-panes.history-forward",
+        label: "Horizontal Panes: Forward in focused pane",
+        keybinding: UNBOUND_KEYBINDING
+      },
+      actions.historyForward
+    );
+    app.registerCommandPalette(
+      {
+        key: "horizontal-panes.move-left",
+        label: "Horizontal Panes: Move focused pane left",
+        keybinding: MOVE_LEFT_KEYBINDING
+      },
+      actions.moveLeft
+    );
+    app.registerCommandPalette(
+      {
+        key: "horizontal-panes.move-right",
+        label: "Horizontal Panes: Move focused pane right",
+        keybinding: MOVE_RIGHT_KEYBINDING
+      },
+      actions.moveRight
+    );
+  }
 
   // src/styles.ts
   var HORIZONTAL_PANES_STYLES = String.raw`
@@ -1841,69 +1915,17 @@
       </a>
     `
     });
-    logseq.App.registerCommandPalette(
-      {
-        key: "horizontal-panes.toggle",
-        label: "Horizontal Panes: Toggle mode"
-      },
-      toggleMode
-    );
-    logseq.App.registerCommandPalette(
-      {
-        key: "horizontal-panes.open-current",
-        label: "Horizontal Panes: Open current page as pane"
-      },
-      openCurrentPageInPane
-    );
-    logseq.App.registerCommandPalette(
-      {
-        key: "horizontal-panes.focus-main",
-        label: "Horizontal Panes: Focus main page"
-      },
-      () => controller.focusMain()
-    );
-    logseq.App.registerCommandPalette(
-      {
-        key: "horizontal-panes.focus-next",
-        label: "Horizontal Panes: Focus pane right"
-      },
-      () => controller.focusAdjacentPane(1)
-    );
-    logseq.App.registerCommandPalette(
-      {
-        key: "horizontal-panes.focus-previous",
-        label: "Horizontal Panes: Focus pane left"
-      },
-      () => controller.focusAdjacentPane(-1)
-    );
-    logseq.App.registerCommandPalette(
-      {
-        key: "horizontal-panes.history-back",
-        label: "Horizontal Panes: Back in focused pane"
-      },
-      () => controller.navigateActivePaneHistory("back")
-    );
-    logseq.App.registerCommandPalette(
-      {
-        key: "horizontal-panes.history-forward",
-        label: "Horizontal Panes: Forward in focused pane"
-      },
-      () => controller.navigateActivePaneHistory("forward")
-    );
-    logseq.App.registerCommandPalette(
-      {
-        key: "horizontal-panes.move-left",
-        label: "Horizontal Panes: Move focused pane left"
-      },
-      () => controller.moveActivePane(-1)
-    );
-    logseq.App.registerCommandPalette(
-      {
-        key: "horizontal-panes.move-right",
-        label: "Horizontal Panes: Move focused pane right"
-      },
-      () => controller.moveActivePane(1)
-    );
+    registerHorizontalPaneCommands(logseq.App, {
+      toggleMode,
+      openCurrentPage: openCurrentPageInPane,
+      focusMain: () => controller.focusMain(),
+      focusNext: () => controller.focusAdjacentPane(1),
+      focusPrevious: () => controller.focusAdjacentPane(-1),
+      historyBack: () => controller.navigateActivePaneHistory("back"),
+      historyForward: () => controller.navigateActivePaneHistory("forward"),
+      moveLeft: () => controller.moveActivePane(-1),
+      moveRight: () => controller.moveActivePane(1)
+    });
     logseq.beforeunload(async () => {
       controller.destroy();
     });
