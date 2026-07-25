@@ -51,6 +51,14 @@ type PaneHistorySession = {
   index: number;
 };
 
+type HistoryRouting = {
+  history: History;
+  backDescriptor: PropertyDescriptor | undefined;
+  forwardDescriptor: PropertyDescriptor | undefined;
+  backWrapper: History['back'];
+  forwardWrapper: History['forward'];
+};
+
 type PaneResizeState = {
   pane: HTMLElement;
   pointerId: number;
@@ -133,6 +141,7 @@ export class HorizontalPanesController {
   private suppressedBlockClickTimer: number | null = null;
   private pendingPaneInsertion: PendingPaneInsertion | null = null;
   private referenceOpenQueue: Promise<void> = Promise.resolve();
+  private historyRouting: HistoryRouting | null = null;
 
   constructor(options: HorizontalPanesOptions, host: HorizontalPanesHost = {}) {
     this.options = options;
@@ -241,6 +250,8 @@ export class HorizontalPanesController {
   }
 
   navigateActivePaneHistory(direction: 'back' | 'forward'): boolean {
+    if (!this.enabled) return false;
+
     const activePane = this.getPanes().find((pane) =>
       pane.classList.contains(ACTIVE_PANE_CLASS)
     );
@@ -260,6 +271,7 @@ export class HorizontalPanesController {
     body.classList.add(BODY_CLASS);
     body.classList.toggle(SNAP_CLASS, this.options.scrollSnap);
     this.applyCssVariables();
+    this.installHistoryRouting();
 
     this.getDocument().addEventListener('wheel', this.handleWheel, {
       capture: true,
@@ -285,6 +297,7 @@ export class HorizontalPanesController {
 
   private deactivate(): void {
     const document = this.getDocument();
+    this.restoreHistoryRouting();
     this.finishPaneResize();
     this.setResizeTarget(null);
     document.body.classList.remove(
@@ -334,6 +347,84 @@ export class HorizontalPanesController {
 
     this.disconnectSidebarList();
     this.focusMain('auto', false);
+  }
+
+  private installHistoryRouting(): void {
+    if (this.historyRouting) return;
+
+    const history = this.getWindow().history;
+    const originalBack = history.back;
+    const originalForward = history.forward;
+    const backDescriptor = Object.getOwnPropertyDescriptor(history, 'back');
+    const forwardDescriptor = Object.getOwnPropertyDescriptor(history, 'forward');
+    const backWrapper: History['back'] = () => {
+      if (!this.navigateActivePaneHistory('back')) {
+        originalBack.call(history);
+      }
+    };
+    const forwardWrapper: History['forward'] = () => {
+      if (!this.navigateActivePaneHistory('forward')) {
+        originalForward.call(history);
+      }
+    };
+
+    try {
+      Object.defineProperties(history, {
+        back: {
+          configurable: true,
+          writable: true,
+          value: backWrapper,
+        },
+        forward: {
+          configurable: true,
+          writable: true,
+          value: forwardWrapper,
+        },
+      });
+      this.historyRouting = {
+        history,
+        backDescriptor,
+        forwardDescriptor,
+        backWrapper,
+        forwardWrapper,
+      };
+    } catch {
+      this.restoreHistoryProperty(history, 'back', backDescriptor);
+      this.restoreHistoryProperty(history, 'forward', forwardDescriptor);
+    }
+  }
+
+  private restoreHistoryRouting(): void {
+    const routing = this.historyRouting;
+    if (!routing) return;
+    this.historyRouting = null;
+
+    if (routing.history.back === routing.backWrapper) {
+      this.restoreHistoryProperty(
+        routing.history,
+        'back',
+        routing.backDescriptor
+      );
+    }
+    if (routing.history.forward === routing.forwardWrapper) {
+      this.restoreHistoryProperty(
+        routing.history,
+        'forward',
+        routing.forwardDescriptor
+      );
+    }
+  }
+
+  private restoreHistoryProperty(
+    history: History,
+    key: 'back' | 'forward',
+    descriptor: PropertyDescriptor | undefined
+  ): void {
+    if (descriptor) {
+      Object.defineProperty(history, key, descriptor);
+    } else {
+      Reflect.deleteProperty(history, key);
+    }
   }
 
   private applyCssVariables(): void {
@@ -1455,7 +1546,9 @@ export class HorizontalPanesController {
   private readonly handleKeyDown = (event: KeyboardEvent): void => {
     const isApplePlatform = /Mac|iPhone|iPad/.test(this.getWindow().navigator.platform);
     const modifierPressed = event.metaKey || (!isApplePlatform && event.ctrlKey);
-    if (!this.enabled || event.altKey || !modifierPressed) return;
+    if (!this.enabled || event.altKey || !event.shiftKey || !modifierPressed) {
+      return;
+    }
 
     const direction =
       event.code === 'BracketLeft'
@@ -1467,12 +1560,7 @@ export class HorizontalPanesController {
 
     event.preventDefault();
     event.stopImmediatePropagation();
-
-    if (event.shiftKey) {
-      this.moveActivePane(direction);
-    } else {
-      this.focusAdjacentPane(direction);
-    }
+    this.moveActivePane(direction);
   };
 
   private rememberCurrentEditor(): void {

@@ -35,23 +35,28 @@ run `Horizontal Panes: Toggle mode` from the command palette to switch it off.
 
 - `Horizontal Panes: Open current page as pane`
 - `Horizontal Panes: Focus main page`
-- `Horizontal Panes: Focus pane left` (`Cmd/Ctrl+[`)
-- `Horizontal Panes: Focus pane right` (`Cmd/Ctrl+]`)
+- `Horizontal Panes: Focus pane left`
+- `Horizontal Panes: Focus pane right`
 - `Horizontal Panes: Back in focused pane`
 - `Horizontal Panes: Forward in focused pane`
 - `Horizontal Panes: Move focused pane left` (`Cmd/Ctrl+Shift+[`)
 - `Horizontal Panes: Move focused pane right` (`Cmd/Ctrl+Shift+]`)
 
 All of these commands can be assigned different shortcuts through Logseq's
-keyboard-shortcut settings. The bracket combinations above remain the plugin's
-direct default controls.
+keyboard-shortcut settings. The Shift-bracket combinations above remain the
+plugin's direct default pane-reordering controls.
 
-The focus shortcuts replace Logseq's default Back and Forward shortcuts. They
-also enter edit mode: the plugin remembers the last edited block and caret
-selection in each pane and restores them when returning. A pane that has not
-been edited yet opens its first editable block with the caret at the end. The
-focused pane is centered in the visible workspace whenever the available
-horizontal scroll range permits it.
+The focus commands enter edit mode: the plugin remembers the last edited block
+and caret selection in each pane and restores them when returning. A pane that
+has not been edited yet opens its first editable block with the caret at the
+end. The focused pane is centered in the visible workspace whenever the
+available horizontal scroll range permits it.
+
+Logseq's own Back and Forward actions—including its configured shortcuts,
+command-palette commands, and top-bar arrows—navigate the focused pane's
+history. When the main page is focused, they retain Logseq's normal main-page
+history behaviour. Reaching the beginning or end of a focused pane's history
+does not fall through and unexpectedly navigate the main page.
 
 The main-page width, sidebar-pane width, the gap after the main page, the gap
 between sidebar panes, and optional scroll snapping are independently
@@ -90,6 +95,11 @@ transfers session history during replacement, and scrolls them into view. The
 plugin adds only its history controls to each native header. Editor restoration
 activates native block content and then focuses Logseq's own mounted editor; it
 does not create or replace an editor.
+
+While horizontal mode is enabled, the plugin temporarily routes the renderer's
+History Back and Forward methods through the active pane. It delegates to the
+original methods when no pane is active and restores the exact prior methods
+when horizontal mode is disabled or the plugin unloads.
 
 That keeps the implementation close to the Roam theme and avoids the editor
 state desynchronization caused by treating rendered Logseq elements as an

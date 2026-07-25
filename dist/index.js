@@ -68,6 +68,7 @@
     suppressedBlockClickTimer = null;
     pendingPaneInsertion = null;
     referenceOpenQueue = Promise.resolve();
+    historyRouting = null;
     constructor(options, host = {}) {
       this.options = options;
       this.host = host;
@@ -156,6 +157,7 @@
       return true;
     }
     navigateActivePaneHistory(direction) {
+      if (!this.enabled) return false;
       const activePane = this.getPanes().find(
         (pane) => pane.classList.contains(ACTIVE_PANE_CLASS)
       );
@@ -172,6 +174,7 @@
       body.classList.add(BODY_CLASS);
       body.classList.toggle(SNAP_CLASS, this.options.scrollSnap);
       this.applyCssVariables();
+      this.installHistoryRouting();
       this.getDocument().addEventListener("wheel", this.handleWheel, {
         capture: true,
         passive: false
@@ -194,6 +197,7 @@
     }
     deactivate() {
       const document = this.getDocument();
+      this.restoreHistoryRouting();
       this.finishPaneResize();
       this.setResizeTarget(null);
       document.body.classList.remove(
@@ -239,6 +243,74 @@
       this.finishPendingPaneInsertion();
       this.disconnectSidebarList();
       this.focusMain("auto", false);
+    }
+    installHistoryRouting() {
+      if (this.historyRouting) return;
+      const history = this.getWindow().history;
+      const originalBack = history.back;
+      const originalForward = history.forward;
+      const backDescriptor = Object.getOwnPropertyDescriptor(history, "back");
+      const forwardDescriptor = Object.getOwnPropertyDescriptor(history, "forward");
+      const backWrapper = () => {
+        if (!this.navigateActivePaneHistory("back")) {
+          originalBack.call(history);
+        }
+      };
+      const forwardWrapper = () => {
+        if (!this.navigateActivePaneHistory("forward")) {
+          originalForward.call(history);
+        }
+      };
+      try {
+        Object.defineProperties(history, {
+          back: {
+            configurable: true,
+            writable: true,
+            value: backWrapper
+          },
+          forward: {
+            configurable: true,
+            writable: true,
+            value: forwardWrapper
+          }
+        });
+        this.historyRouting = {
+          history,
+          backDescriptor,
+          forwardDescriptor,
+          backWrapper,
+          forwardWrapper
+        };
+      } catch {
+        this.restoreHistoryProperty(history, "back", backDescriptor);
+        this.restoreHistoryProperty(history, "forward", forwardDescriptor);
+      }
+    }
+    restoreHistoryRouting() {
+      const routing = this.historyRouting;
+      if (!routing) return;
+      this.historyRouting = null;
+      if (routing.history.back === routing.backWrapper) {
+        this.restoreHistoryProperty(
+          routing.history,
+          "back",
+          routing.backDescriptor
+        );
+      }
+      if (routing.history.forward === routing.forwardWrapper) {
+        this.restoreHistoryProperty(
+          routing.history,
+          "forward",
+          routing.forwardDescriptor
+        );
+      }
+    }
+    restoreHistoryProperty(history, key, descriptor) {
+      if (descriptor) {
+        Object.defineProperty(history, key, descriptor);
+      } else {
+        Reflect.deleteProperty(history, key);
+      }
     }
     applyCssVariables() {
       if (!this.enabled) return;
@@ -1054,16 +1126,14 @@
     handleKeyDown = (event) => {
       const isApplePlatform = /Mac|iPhone|iPad/.test(this.getWindow().navigator.platform);
       const modifierPressed = event.metaKey || !isApplePlatform && event.ctrlKey;
-      if (!this.enabled || event.altKey || !modifierPressed) return;
+      if (!this.enabled || event.altKey || !event.shiftKey || !modifierPressed) {
+        return;
+      }
       const direction = event.code === "BracketLeft" ? -1 : event.code === "BracketRight" ? 1 : null;
       if (direction === null) return;
       event.preventDefault();
       event.stopImmediatePropagation();
-      if (event.shiftKey) {
-        this.moveActivePane(direction);
-      } else {
-        this.focusAdjacentPane(direction);
-      }
+      this.moveActivePane(direction);
     };
     rememberCurrentEditor() {
       const activeElement = this.getDocument().activeElement;

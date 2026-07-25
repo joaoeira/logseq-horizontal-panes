@@ -147,6 +147,18 @@ function dispatchPointer(
   return event;
 }
 
+function restoreOwnProperty(
+  target: object,
+  key: PropertyKey,
+  descriptor: PropertyDescriptor | undefined
+): void {
+  if (descriptor) {
+    Object.defineProperty(target, key, descriptor);
+  } else {
+    Reflect.deleteProperty(target, key);
+  }
+}
+
 describe('HorizontalPanesController', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -333,6 +345,135 @@ describe('HorizontalPanesController', () => {
       'B',
     ]);
     controller.destroy();
+  });
+
+  it('routes Logseq Back and Forward through the focused pane history', async () => {
+    const { list } = installFixture();
+    const paneA = createBlockPane('A', 'B');
+    list.append(paneA);
+    const openPaneReference = vi.fn(async (target: string | number) => {
+      list.prepend(createBlockPane(String(target)));
+    });
+
+    const controller = new HorizontalPanesController(navigationOptions, {
+      openPaneReference,
+    });
+    controller.setEnabled(true);
+
+    const childBullet = paneA.querySelector<HTMLElement>('.bullet')!;
+    dispatchPointer(childBullet, 'pointerdown');
+    dispatchPointer(childBullet, 'pointerup');
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+
+    window.history.back();
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+    const callsAfterBack = openPaneReference.mock.calls.map(([target]) => target);
+
+    window.history.forward();
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+    const callsAfterForward = openPaneReference.mock.calls.map(([target]) => target);
+    controller.destroy();
+
+    expect(callsAfterBack).toEqual(['B', 'A']);
+    expect(callsAfterForward).toEqual(['B', 'A', 'B']);
+  });
+
+  it('delegates to and restores Logseq history when no pane is focused', () => {
+    installFixture();
+    const history = window.history;
+    const originalBackDescriptor = Object.getOwnPropertyDescriptor(history, 'back');
+    const originalForwardDescriptor = Object.getOwnPropertyDescriptor(
+      history,
+      'forward'
+    );
+    const mainBack = vi.fn();
+    const mainForward = vi.fn();
+    Object.defineProperties(history, {
+      back: {
+        configurable: true,
+        writable: true,
+        value: mainBack,
+      },
+      forward: {
+        configurable: true,
+        writable: true,
+        value: mainForward,
+      },
+    });
+
+    const controller = new HorizontalPanesController(options);
+    controller.setEnabled(true);
+    history.back();
+    history.forward();
+    controller.setEnabled(false);
+    const restoredBack = history.back;
+    const restoredForward = history.forward;
+
+    restoreOwnProperty(history, 'back', originalBackDescriptor);
+    restoreOwnProperty(history, 'forward', originalForwardDescriptor);
+
+    expect(mainBack).toHaveBeenCalledOnce();
+    expect(mainForward).toHaveBeenCalledOnce();
+    expect(restoredBack).toBe(mainBack);
+    expect(restoredForward).toBe(mainForward);
+  });
+
+  it('does not fall through to main history at the start of a focused pane history', () => {
+    const { list } = installFixture();
+    const pane = createBlockPane('A');
+    list.append(pane);
+    const history = window.history;
+    const originalBackDescriptor = Object.getOwnPropertyDescriptor(history, 'back');
+    const mainBack = vi.fn();
+    Object.defineProperty(history, 'back', {
+      configurable: true,
+      writable: true,
+      value: mainBack,
+    });
+
+    const controller = new HorizontalPanesController(options);
+    controller.setEnabled(true);
+    dispatchPointer(pane, 'pointerdown');
+    history.back();
+    controller.destroy();
+
+    restoreOwnProperty(history, 'back', originalBackDescriptor);
+
+    expect(mainBack).not.toHaveBeenCalled();
+  });
+
+  it('preserves a History wrapper installed after horizontal mode starts', () => {
+    installFixture();
+    const history = window.history;
+    const originalBackDescriptor = Object.getOwnPropertyDescriptor(history, 'back');
+    const mainBack = vi.fn();
+    Object.defineProperty(history, 'back', {
+      configurable: true,
+      writable: true,
+      value: mainBack,
+    });
+
+    const controller = new HorizontalPanesController(options);
+    controller.setEnabled(true);
+    const horizontalPanesBack = history.back;
+    const laterWrapper = vi.fn(() => horizontalPanesBack.call(history));
+    Object.defineProperty(history, 'back', {
+      configurable: true,
+      writable: true,
+      value: laterWrapper,
+    });
+
+    controller.setEnabled(false);
+    const restoredBack = history.back;
+    history.back();
+    restoreOwnProperty(history, 'back', originalBackDescriptor);
+
+    expect(restoredBack).toBe(laterWrapper);
+    expect(laterWrapper).toHaveBeenCalledOnce();
+    expect(mainBack).toHaveBeenCalledOnce();
   });
 
   it('discards the old Forward branch after navigating from a historical target', async () => {
@@ -1188,7 +1329,7 @@ describe('HorizontalPanesController', () => {
     controller.destroy();
   });
 
-  it('consumes the bracket shortcuts before Logseq and uses Shift to reorder', () => {
+  it('leaves plain bracket shortcuts to Logseq and uses Shift to reorder', () => {
     const { list, scrollTo } = installFixture();
     const newestPane = document.createElement('div');
     const oldestPane = document.createElement('div');
@@ -1211,16 +1352,19 @@ describe('HorizontalPanesController', () => {
     expect(ordinaryBracket.defaultPrevented).toBe(false);
     expect(list.querySelector('.horizontal-panes-active-pane')).toBeNull();
 
-    const focusRight = new KeyboardEvent('keydown', {
+    const logseqForward = new KeyboardEvent('keydown', {
       code: 'BracketRight',
       key: ']',
       metaKey: true,
       bubbles: true,
       cancelable: true,
     });
-    document.dispatchEvent(focusRight);
+    document.dispatchEvent(logseqForward);
 
-    expect(focusRight.defaultPrevented).toBe(true);
+    expect(logseqForward.defaultPrevented).toBe(false);
+    expect(list.querySelector('.horizontal-panes-active-pane')).toBeNull();
+
+    controller.focusAdjacentPane(1);
     expect(scrollTo).toHaveBeenLastCalledWith({ left: 490, behavior: 'smooth' });
     expect(list.querySelector('.horizontal-panes-active-pane')).toBe(oldestPane);
 
