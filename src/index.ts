@@ -207,6 +207,12 @@ async function main(): Promise<void> {
     focusHorizontalPanesPrevious() {
       controller.focusAdjacentPane(-1);
     },
+    navigateHorizontalPaneBack() {
+      controller.navigateActivePaneHistory('back');
+    },
+    navigateHorizontalPaneForward() {
+      controller.navigateActivePaneHistory('forward');
+    },
     moveHorizontalPaneLeft() {
       controller.moveActivePane(-1);
     },
@@ -266,6 +272,20 @@ async function main(): Promise<void> {
       label: 'Horizontal Panes: Focus pane left',
     },
     () => controller.focusAdjacentPane(-1)
+  );
+  logseq.App.registerCommandPalette(
+    {
+      key: 'horizontal-panes.history-back',
+      label: 'Horizontal Panes: Back in focused pane',
+    },
+    () => controller.navigateActivePaneHistory('back')
+  );
+  logseq.App.registerCommandPalette(
+    {
+      key: 'horizontal-panes.history-forward',
+      label: 'Horizontal Panes: Forward in focused pane',
+    },
+    () => controller.navigateActivePaneHistory('forward')
   );
   logseq.App.registerCommandPalette(
     {

@@ -37,8 +37,14 @@ run `Horizontal Panes: Toggle mode` from the command palette to switch it off.
 - `Horizontal Panes: Focus main page`
 - `Horizontal Panes: Focus pane left` (`Cmd/Ctrl+[`)
 - `Horizontal Panes: Focus pane right` (`Cmd/Ctrl+]`)
+- `Horizontal Panes: Back in focused pane`
+- `Horizontal Panes: Forward in focused pane`
 - `Horizontal Panes: Move focused pane left` (`Cmd/Ctrl+Shift+[`)
 - `Horizontal Panes: Move focused pane right` (`Cmd/Ctrl+Shift+]`)
+
+All of these commands can be assigned different shortcuts through Logseq's
+keyboard-shortcut settings. The bracket combinations above remain the plugin's
+direct default controls.
 
 The focus shortcuts replace Logseq's default Back and Forward shortcuts. They
 also enter edit mode: the plugin remembers the last edited block and caret

@@ -294,6 +294,47 @@ describe('HorizontalPanesController', () => {
     controller.destroy();
   });
 
+  it('navigates the focused pane history through the public command interface', async () => {
+    const { list } = installFixture();
+    const paneA = createBlockPane('A', 'B');
+    list.append(paneA);
+    const openPaneReference = vi.fn(async (target: string | number) => {
+      list.prepend(createBlockPane(String(target)));
+    });
+
+    const controller = new HorizontalPanesController(navigationOptions, {
+      openPaneReference,
+    });
+    controller.setEnabled(true);
+
+    const childBullet = paneA.querySelector<HTMLElement>('.bullet')!;
+    dispatchPointer(childBullet, 'pointerdown');
+    dispatchPointer(childBullet, 'pointerup');
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+
+    expect(controller.navigateActivePaneHistory('back')).toBe(true);
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+
+    const restoredPaneA = list.querySelector<HTMLElement>(
+      '.sidebar-item .ls-block[blockid="A"]'
+    )!.closest<HTMLElement>('.sidebar-item')!;
+    expect(openPaneReference.mock.calls.map(([target]) => target)).toEqual(['B', 'A']);
+    expect(restoredPaneA.classList.contains('horizontal-panes-active-pane')).toBe(
+      true
+    );
+    expect(controller.navigateActivePaneHistory('forward')).toBe(true);
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+    expect(openPaneReference.mock.calls.map(([target]) => target)).toEqual([
+      'B',
+      'A',
+      'B',
+    ]);
+    controller.destroy();
+  });
+
   it('discards the old Forward branch after navigating from a historical target', async () => {
     const { list } = installFixture();
     const paneA = createBlockPane('A', 'B');

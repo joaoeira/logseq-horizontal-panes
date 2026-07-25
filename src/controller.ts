@@ -240,6 +240,16 @@ export class HorizontalPanesController {
     return true;
   }
 
+  navigateActivePaneHistory(direction: 'back' | 'forward'): boolean {
+    const activePane = this.getPanes().find((pane) =>
+      pane.classList.contains(ACTIVE_PANE_CLASS)
+    );
+    if (!activePane) return false;
+
+    this.queuePaneHistoryNavigation(activePane, direction);
+    return true;
+  }
+
   destroy(): void {
     this.enabled = false;
     this.deactivate();
@@ -918,10 +928,17 @@ export class HorizontalPanesController {
 
     event.preventDefault();
     event.stopImmediatePropagation();
+    this.queuePaneHistoryNavigation(pane, direction);
+    return true;
+  }
+
+  private queuePaneHistoryNavigation(
+    pane: HTMLElement,
+    direction: 'back' | 'forward'
+  ): void {
     this.referenceOpenQueue = this.referenceOpenQueue
       .catch(() => undefined)
       .then(() => this.navigatePaneHistory(pane, direction));
-    return true;
   }
 
   private getPaneReferenceActivation(target: EventTarget | null): PaneReferenceActivation | null {

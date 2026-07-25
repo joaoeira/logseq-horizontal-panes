@@ -155,6 +155,14 @@
       this.scheduleFocus(activePane);
       return true;
     }
+    navigateActivePaneHistory(direction) {
+      const activePane = this.getPanes().find(
+        (pane) => pane.classList.contains(ACTIVE_PANE_CLASS)
+      );
+      if (!activePane) return false;
+      this.queuePaneHistoryNavigation(activePane, direction);
+      return true;
+    }
     destroy() {
       this.enabled = false;
       this.deactivate();
@@ -679,8 +687,11 @@
       }
       event.preventDefault();
       event.stopImmediatePropagation();
-      this.referenceOpenQueue = this.referenceOpenQueue.catch(() => void 0).then(() => this.navigatePaneHistory(pane, direction));
+      this.queuePaneHistoryNavigation(pane, direction);
       return true;
+    }
+    queuePaneHistoryNavigation(pane, direction) {
+      this.referenceOpenQueue = this.referenceOpenQueue.catch(() => void 0).then(() => this.navigatePaneHistory(pane, direction));
     }
     getPaneReferenceActivation(target) {
       if (!(target instanceof this.getWindow().Element)) return null;
@@ -1731,6 +1742,12 @@
       focusHorizontalPanesPrevious() {
         controller.focusAdjacentPane(-1);
       },
+      navigateHorizontalPaneBack() {
+        controller.navigateActivePaneHistory("back");
+      },
+      navigateHorizontalPaneForward() {
+        controller.navigateActivePaneHistory("forward");
+      },
       moveHorizontalPaneLeft() {
         controller.moveActivePane(-1);
       },
@@ -1788,6 +1805,20 @@
         label: "Horizontal Panes: Focus pane left"
       },
       () => controller.focusAdjacentPane(-1)
+    );
+    logseq.App.registerCommandPalette(
+      {
+        key: "horizontal-panes.history-back",
+        label: "Horizontal Panes: Back in focused pane"
+      },
+      () => controller.navigateActivePaneHistory("back")
+    );
+    logseq.App.registerCommandPalette(
+      {
+        key: "horizontal-panes.history-forward",
+        label: "Horizontal Panes: Forward in focused pane"
+      },
+      () => controller.navigateActivePaneHistory("forward")
     );
     logseq.App.registerCommandPalette(
       {
