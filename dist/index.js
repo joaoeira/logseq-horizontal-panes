@@ -661,7 +661,7 @@
       }
       const existingPane = this.findPaneForTarget(target, reference);
       if (existingPane) {
-        this.reusePaneTarget(existingPane, sourcePane, action);
+        this.scheduleFocus(existingPane);
         return;
       }
       const { pendingInsertion, insertionComplete } = this.beginPendingPaneInsertion(
@@ -702,43 +702,6 @@
     }
     normalizeTargetKey(target) {
       return String(target).trim().toLocaleLowerCase();
-    }
-    reusePaneTarget(targetPane, sourcePane, action) {
-      if (targetPane === sourcePane) {
-        this.scheduleFocus(targetPane);
-        return;
-      }
-      const panes = this.getPanes();
-      if (!panes.includes(targetPane) || !panes.includes(sourcePane)) return;
-      let nextOrder;
-      if (action === "replace") {
-        const sourceIndex = panes.indexOf(sourcePane);
-        const insertionIndex = panes.slice(0, sourceIndex).filter((pane) => pane !== targetPane).length;
-        const remainingPanes = panes.filter(
-          (pane) => pane !== targetPane && pane !== sourcePane
-        );
-        nextOrder = [
-          ...remainingPanes.slice(0, insertionIndex),
-          targetPane,
-          ...remainingPanes.slice(insertionIndex)
-        ];
-        if (!this.closeNativePane(sourcePane)) {
-          console.warn("Horizontal Panes could not find the native pane close control");
-          this.scheduleFocus(targetPane);
-          return;
-        }
-      } else {
-        const remainingPanes = panes.filter((pane) => pane !== targetPane);
-        const sourceIndex = remainingPanes.indexOf(sourcePane);
-        nextOrder = [
-          ...remainingPanes.slice(0, sourceIndex + 1),
-          targetPane,
-          ...remainingPanes.slice(sourceIndex + 1)
-        ];
-      }
-      this.paneOrder = action === "replace" && sourcePane.isConnected ? [...nextOrder, sourcePane] : nextOrder;
-      this.applyPaneOrder();
-      this.scheduleFocus(targetPane);
     }
     beginPendingPaneInsertion(sourcePane, action, startTimeout) {
       let resolveInsertion = () => void 0;

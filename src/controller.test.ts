@@ -219,7 +219,7 @@ describe('HorizontalPanesController', () => {
     controller.destroy();
   });
 
-  it('reuses an already-open block pane when a shaky plain-click replaces its source', async () => {
+  it('focuses an already-open block target without changing panes after a shaky plain-click', async () => {
     const { list } = installFixture();
     const paneD = createBlockPane('D');
     const paneC = createBlockPane('C');
@@ -240,15 +240,16 @@ describe('HorizontalPanesController', () => {
     await flushMutationAndFrames();
 
     expect(openPaneReference).not.toHaveBeenCalled();
-    expect(paneB.isConnected).toBe(false);
+    expect(paneB.isConnected).toBe(true);
     expect(paneA.style.order).toBe('0');
-    expect(paneD.style.order).toBe('1');
+    expect(paneB.style.order).toBe('1');
     expect(paneC.style.order).toBe('2');
+    expect(paneD.style.order).toBe('3');
     expect(paneD.classList.contains('horizontal-panes-active-pane')).toBe(true);
     controller.destroy();
   });
 
-  it('moves an already-open block pane immediately after its source on Shift-click', async () => {
+  it('focuses an already-open block target without moving it on Shift-click', async () => {
     const { list } = installFixture();
     const paneD = createBlockPane('D');
     const paneC = createBlockPane('C');
@@ -271,8 +272,9 @@ describe('HorizontalPanesController', () => {
     expect(paneB.isConnected).toBe(true);
     expect(paneA.style.order).toBe('0');
     expect(paneB.style.order).toBe('1');
-    expect(paneD.style.order).toBe('2');
-    expect(paneC.style.order).toBe('3');
+    expect(paneC.style.order).toBe('2');
+    expect(paneD.style.order).toBe('3');
+    expect(paneD.classList.contains('horizontal-panes-active-pane')).toBe(true);
     controller.destroy();
   });
 
@@ -305,7 +307,7 @@ describe('HorizontalPanesController', () => {
     controller.destroy();
   });
 
-  it('reuses an already-open page pane by its native page header', async () => {
+  it('focuses an already-open page target without closing its source pane', async () => {
     const { list } = installFixture();
     const targetPane = createPagePane('Target Page');
     const sourcePane = createBlockPane('Source');
@@ -328,11 +330,14 @@ describe('HorizontalPanesController', () => {
     dispatchPointer(pageReference, 'pointerdown');
     dispatchPointer(pageReference, 'pointerup');
     await flushMutationAndFrames();
+    await flushEditorFrames();
 
     expect(resolvePaneReference).toHaveBeenCalledWith('Target Page');
     expect(openPaneReference).not.toHaveBeenCalled();
-    expect(sourcePane.isConnected).toBe(false);
-    expect(targetPane.style.order).toBe('0');
+    expect(sourcePane.isConnected).toBe(true);
+    expect(sourcePane.style.order).toBe('0');
+    expect(targetPane.style.order).toBe('1');
+    expect(targetPane.classList.contains('horizontal-panes-active-pane')).toBe(true);
     controller.destroy();
   });
 
