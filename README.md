@@ -60,17 +60,30 @@ width for the current session. The resize target extends into the surrounding
 gap, so it does not require pixel-perfect pointing or interfere with the pane's
 vertical scrollbar. Double-click the same border to restore the configured
 default pane width. Manual widths follow panes when they are reordered and are
-discarded when horizontal mode is disabled or Logseq is restarted.
+retained while their contents navigate through history. They are discarded
+when horizontal mode is disabled or Logseq is restarted.
+
+Each expanded sidebar pane has its own Back and Forward buttons in the native
+header. Plain-click replacements are added to that pane's history; a
+Shift-clicked pane starts with a fresh history. Moving a pane carries its
+history with it, while closing the pane or restarting Logseq discards it.
+Returning through history also restores the pane's vertical scroll position
+and its last edited block and caret selection.
+
+Logseq does not permit two native root panes for the same block or page. If a
+historical target is already open elsewhere, the plugin focuses that pane
+without consuming the original pane's history or changing the layout.
 
 ## Deliberate constraints
 
 This proof of concept never reorders or reparents Logseq's React-owned DOM
 nodes. Reordering changes the panes' CSS flex order only. The plugin relies on
 native sidebar creation, editing, collapse, and close behaviour. A small
-mutation observer notices newly opened panes, maintains their visual order, and
-scrolls them into view. Editor restoration activates native block content and
-then focuses Logseq's own mounted editor; it does not create or replace an
-editor.
+mutation observer notices newly opened panes, maintains their visual order,
+transfers session history during replacement, and scrolls them into view. The
+plugin adds only its history controls to each native header. Editor restoration
+activates native block content and then focuses Logseq's own mounted editor; it
+does not create or replace an editor.
 
 That keeps the implementation close to the Roam theme and avoids the editor
 state desynchronization caused by treating rendered Logseq elements as an

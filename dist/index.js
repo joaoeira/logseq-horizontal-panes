@@ -20,6 +20,7 @@
   var RESIZE_TARGET_CLASS = "horizontal-panes-resize-target";
   var RESIZE_TARGET_BODY_CLASS = "horizontal-panes-pane-resize-target";
   var RESIZING_BODY_CLASS = "horizontal-panes-pane-resizing";
+  var HISTORY_CONTROLS_CLASS = "horizontal-panes-history-controls";
   var SIDEBAR_LIST_SELECTOR = ".sidebar-item-list";
   var PANE_SELECTOR = ":scope > .sidebar-item";
   var APP_CONTAINER_SELECTOR = "#app-container";
@@ -58,6 +59,7 @@
     editorBookmarks = /* @__PURE__ */ new WeakMap();
     resizeTargetPane = null;
     paneResize = null;
+    paneHistories = /* @__PURE__ */ new WeakMap();
     pendingReferencePointer = null;
     pendingBlockPointer = null;
     suppressedReferenceClick = null;
@@ -245,7 +247,10 @@
     }
     ensureSidebarList(focusNewestWhenAttached) {
       const nextList = this.getDocument().querySelector(SIDEBAR_LIST_SELECTOR);
-      if (nextList === this.sidebarList && nextList?.isConnected) return;
+      if (nextList === this.sidebarList && nextList?.isConnected) {
+        this.getPanes().forEach((pane) => this.attachPaneScrollListener(pane));
+        return;
+      }
       this.disconnectSidebarList();
       if (!nextList) return;
       this.sidebarList = nextList;
@@ -277,6 +282,7 @@
         );
         pane.style.removeProperty("order");
         pane.style.removeProperty("--horizontal-panes-pane-width-override");
+        pane.querySelector(`.${HISTORY_CONTROLS_CLASS}`)?.remove();
       });
       this.paneScrollListeners.clear();
       this.paneOrder = [];
@@ -350,6 +356,13 @@
       } else {
         this.paneOrder = [...retainedOrder, ...appendedOrder];
       }
+      if (newestPane && pendingInsertion?.action === "replace" && pendingInsertion.replacementHistory) {
+        this.paneHistories.set(newestPane, pendingInsertion.replacementHistory);
+        this.restorePaneHistoryEntry(newestPane, pendingInsertion.replacementHistory);
+      }
+      if (newestPane && pendingInsertion?.action === "replace") {
+        this.transferPaneWidth(pendingInsertion.sourcePane, newestPane);
+      }
       this.applyPaneOrder();
       this.paneOrder.forEach((pane) => this.attachPaneScrollListener(pane));
       if (newestPane) {
@@ -389,6 +402,11 @@
       const outgoingCommit = this.releaseEditorOutside(pane);
       const appContainer = this.getAppContainer();
       if (!appContainer) return;
+      const history = this.paneHistories.get(pane);
+      const historyEntry = history?.entries[history.index];
+      if (historyEntry?.scrollTop !== void 0) {
+        pane.scrollTop = historyEntry.scrollTop;
+      }
       this.markActivePane(pane);
       const nextLeft = this.getCenteredScrollLeft(appContainer, pane);
       appContainer.scrollTo({ left: nextLeft, behavior: "smooth" });
@@ -410,13 +428,81 @@
       this.sidebarList?.querySelectorAll(`.${ACTIVE_PANE_CLASS}`).forEach((pane) => pane.classList.remove(ACTIVE_PANE_CLASS));
     }
     attachPaneScrollListener(pane) {
-      if (this.paneScrollListeners.has(pane)) return;
-      pane.addEventListener("scroll", this.handlePaneScroll, { passive: true });
-      this.paneScrollListeners.add(pane);
+      if (!this.paneScrollListeners.has(pane)) {
+        pane.addEventListener("scroll", this.handlePaneScroll, { passive: true });
+        this.paneScrollListeners.add(pane);
+      }
+      this.ensurePaneHistoryControls(pane);
     }
-    handlePaneScroll = () => {
+    handlePaneScroll = (event) => {
+      const pane = event.currentTarget;
+      if (pane instanceof this.getWindow().HTMLElement) {
+        const history = this.paneHistories.get(pane);
+        const entry = history?.entries[history.index];
+        if (entry) entry.scrollTop = pane.scrollTop;
+      }
       this.sidebarList?.dispatchEvent(new Event("scroll"));
     };
+    ensurePaneHistoryControls(pane) {
+      const header = pane.querySelector(".sidebar-item-header");
+      if (!header) return;
+      const history = this.ensurePaneHistory(pane);
+      if (header.querySelector(`.${HISTORY_CONTROLS_CLASS}`)) {
+        this.updatePaneHistoryControls(pane, history);
+        return;
+      }
+      const controls = this.getDocument().createElement("span");
+      controls.className = HISTORY_CONTROLS_CLASS;
+      controls.setAttribute("role", "group");
+      controls.setAttribute("aria-label", "Pane history");
+      controls.append(
+        this.createPaneHistoryButton("back", "Back in pane"),
+        this.createPaneHistoryButton("forward", "Forward in pane")
+      );
+      const nativeActions = header.querySelector(":scope > .item-actions");
+      header.insertBefore(controls, nativeActions);
+      this.updatePaneHistoryControls(pane, history);
+    }
+    createPaneHistoryButton(direction, label) {
+      const button = this.getDocument().createElement("button");
+      button.type = "button";
+      button.disabled = true;
+      button.setAttribute("aria-label", label);
+      button.setAttribute("title", label);
+      button.setAttribute("data-horizontal-panes-history", direction);
+      button.innerHTML = direction === "back" ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/><path d="M9 12h10"/></svg>' : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/><path d="M5 12h10"/></svg>';
+      return button;
+    }
+    ensurePaneHistory(pane) {
+      const existing = this.paneHistories.get(pane);
+      if (existing) return existing;
+      const initialEntry = this.getPaneHistoryEntry(pane);
+      const history = initialEntry ? { entries: [initialEntry], index: 0 } : { entries: [], index: -1 };
+      this.paneHistories.set(pane, history);
+      return history;
+    }
+    getPaneHistoryEntry(pane) {
+      if (pane.classList.contains("item-type-page")) {
+        const header = pane.querySelector(".sidebar-item-header");
+        const pageTitle = header?.querySelector("button[aria-controls]")?.textContent?.trim() ?? "";
+        return pageTitle ? { target: pageTitle, reference: pageTitle } : null;
+      }
+      const rootBlock = pane.querySelector(BLOCK_SELECTOR);
+      const blockId = rootBlock ? this.getBlockId(rootBlock)?.trim() : null;
+      return blockId ? { target: blockId } : null;
+    }
+    updatePaneHistoryControls(pane, history = this.ensurePaneHistory(pane)) {
+      const back = pane.querySelector(
+        'button[data-horizontal-panes-history="back"]'
+      );
+      const forward = pane.querySelector(
+        'button[data-horizontal-panes-history="forward"]'
+      );
+      if (back) back.disabled = history.index <= 0;
+      if (forward) {
+        forward.disabled = history.index < 0 || history.index >= history.entries.length - 1;
+      }
+    }
     handleWheel = (event) => {
       if (!this.enabled || !shouldRemapWheelToHorizontal({
         shiftKey: event.shiftKey,
@@ -558,6 +644,7 @@
       this.setResizeTarget(null);
     };
     handleClick = (event) => {
+      if (this.handlePaneHistoryClick(event)) return;
       const suppressed = this.suppressedReferenceClick;
       if (suppressed) {
         const referenceActivation = this.getPaneReferenceActivation(event.target);
@@ -577,6 +664,24 @@
         this.clearSuppressedBlockClick();
       }
     };
+    handlePaneHistoryClick(event) {
+      if (!this.enabled || !(event.target instanceof this.getWindow().Element)) {
+        return false;
+      }
+      const button = event.target.closest(
+        "button[data-horizontal-panes-history]"
+      );
+      if (!button || button.disabled) return false;
+      const pane = button.closest(".sidebar-item");
+      const direction = button.getAttribute("data-horizontal-panes-history");
+      if (!pane || pane.parentElement !== this.sidebarList || direction !== "back" && direction !== "forward") {
+        return false;
+      }
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.referenceOpenQueue = this.referenceOpenQueue.catch(() => void 0).then(() => this.navigatePaneHistory(pane, direction));
+      return true;
+    }
     getPaneReferenceActivation(target) {
       if (!(target instanceof this.getWindow().Element)) return null;
       const referenceElement = target.closest(
@@ -641,6 +746,54 @@
       }
       this.suppressedBlockClick = null;
     }
+    async navigatePaneHistory(sourcePane, direction) {
+      const openReference = this.host.openPaneReference;
+      if (!this.enabled || !openReference || !sourcePane.isConnected || !this.getPanes().includes(sourcePane)) {
+        return;
+      }
+      const history = this.ensurePaneHistory(sourcePane);
+      this.rememberPaneHistoryEntry(sourcePane, history);
+      const nextIndex = history.index + (direction === "back" ? -1 : 1);
+      const entry = history.entries[nextIndex];
+      if (!entry) return;
+      let target = entry.target;
+      if (entry.reference && this.host.resolvePaneReference) {
+        try {
+          target = await this.host.resolvePaneReference(entry.reference) ?? entry.target;
+        } catch {
+          return;
+        }
+      }
+      if (!sourcePane.isConnected || !this.getPanes().includes(sourcePane)) return;
+      const existingPane = this.findPaneForTarget(target, entry.reference);
+      if (existingPane) {
+        this.scheduleFocus(existingPane);
+        return;
+      }
+      const replacementHistory = {
+        entries: [...history.entries],
+        index: nextIndex
+      };
+      const { pendingInsertion, insertionComplete } = this.beginPendingPaneInsertion(
+        sourcePane,
+        "replace",
+        false,
+        replacementHistory
+      );
+      try {
+        await openReference(target);
+      } catch {
+        this.finishPendingPaneInsertion(pendingInsertion);
+        return;
+      }
+      if (this.pendingPaneInsertion === pendingInsertion) {
+        pendingInsertion.timeout = window.setTimeout(
+          () => this.finishPendingPaneInsertion(pendingInsertion),
+          1500
+        );
+      }
+      await insertionComplete;
+    }
     async navigatePaneReference(reference, sourcePane, action) {
       const resolveReference = this.host.resolvePaneReference;
       const openReference = this.host.openPaneReference;
@@ -664,10 +817,12 @@
         this.scheduleFocus(existingPane);
         return;
       }
+      const replacementHistory = action === "replace" ? this.getReplacementHistory(sourcePane, { target, reference }) : null;
       const { pendingInsertion, insertionComplete } = this.beginPendingPaneInsertion(
         sourcePane,
         action,
-        false
+        false,
+        replacementHistory
       );
       try {
         await openReference(target);
@@ -682,6 +837,56 @@
         );
       }
       await insertionComplete;
+    }
+    getReplacementHistory(sourcePane, nextEntry) {
+      const history = this.ensurePaneHistory(sourcePane);
+      this.rememberPaneHistoryEntry(sourcePane, history);
+      const retainedEntries = history.index >= 0 ? history.entries.slice(0, history.index + 1) : [];
+      return {
+        entries: [...retainedEntries, nextEntry],
+        index: retainedEntries.length
+      };
+    }
+    rememberPaneHistoryEntry(pane, history = this.ensurePaneHistory(pane)) {
+      this.rememberCurrentEditor();
+      const entry = history.entries[history.index];
+      if (!entry) return;
+      entry.scrollTop = pane.scrollTop;
+      const bookmark = this.editorBookmarks.get(pane);
+      if (bookmark) {
+        entry.editorBookmark = {
+          blockId: bookmark.blockId,
+          selectionStart: bookmark.selectionStart,
+          selectionEnd: bookmark.selectionEnd
+        };
+      }
+    }
+    restorePaneHistoryEntry(pane, history) {
+      const entry = history.entries[history.index];
+      if (!entry) return;
+      if (entry.scrollTop !== void 0) {
+        pane.scrollTop = entry.scrollTop;
+      }
+      if (!entry.editorBookmark) {
+        this.editorBookmarks.delete(pane);
+        return;
+      }
+      const block = Array.from(pane.querySelectorAll(BLOCK_SELECTOR)).find(
+        (candidate) => this.getBlockId(candidate) === entry.editorBookmark?.blockId
+      ) ?? null;
+      this.editorBookmarks.set(pane, {
+        block,
+        ...entry.editorBookmark
+      });
+    }
+    transferPaneWidth(sourcePane, targetPane) {
+      if (!sourcePane.classList.contains(MANUAL_WIDTH_CLASS)) return;
+      const width = sourcePane.style.getPropertyValue(
+        "--horizontal-panes-pane-width-override"
+      );
+      if (!width) return;
+      targetPane.style.setProperty("--horizontal-panes-pane-width-override", width);
+      targetPane.classList.add(MANUAL_WIDTH_CLASS);
     }
     findPaneForTarget(target, reference) {
       const targetKey = this.normalizeTargetKey(target);
@@ -703,7 +908,7 @@
     normalizeTargetKey(target) {
       return String(target).trim().toLocaleLowerCase();
     }
-    beginPendingPaneInsertion(sourcePane, action, startTimeout) {
+    beginPendingPaneInsertion(sourcePane, action, startTimeout, replacementHistory = null) {
       let resolveInsertion = () => void 0;
       const insertionComplete = new Promise((resolve) => {
         resolveInsertion = resolve;
@@ -713,6 +918,7 @@
         sourcePane,
         existingPanes: new Set(this.getNativePanes()),
         replacementPane: null,
+        replacementHistory,
         timeout: null,
         resolve: resolveInsertion
       };
@@ -1007,7 +1213,7 @@
     }
     resolveBookmarkedBlock(container, bookmark) {
       if (!bookmark) return null;
-      if (bookmark.block.isConnected && container.contains(bookmark.block)) {
+      if (bookmark.block?.isConnected && container.contains(bookmark.block)) {
         return bookmark.block;
       }
       if (!bookmark.blockId) return null;
@@ -1283,6 +1489,48 @@
     backdrop-filter: blur(12px);
   }
 
+  body.horizontal-panes-active .horizontal-panes-history-controls {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+  }
+
+  body.horizontal-panes-active .horizontal-panes-history-controls > button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    margin: 0;
+    padding: 6px;
+    color: var(--ls-secondary-text-color);
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+  }
+
+  body.horizontal-panes-active .horizontal-panes-history-controls > button:hover:not(:disabled) {
+    color: var(--ls-primary-text-color);
+    background: color-mix(in srgb, var(--ls-primary-text-color) 8%, transparent);
+  }
+
+  body.horizontal-panes-active .horizontal-panes-history-controls > button:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+
+  body.horizontal-panes-active .horizontal-panes-history-controls > button > svg {
+    width: 20px;
+    height: 20px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
   body.horizontal-panes-active .sidebar-item .sidebar-panel-content {
     padding-bottom: 72px;
   }
@@ -1315,6 +1563,10 @@
   }
 
   body.horizontal-panes-active .sidebar-item.collapsed .sidebar-item-header .item-actions {
+    display: none !important;
+  }
+
+  body.horizontal-panes-active .sidebar-item.collapsed .horizontal-panes-history-controls {
     display: none !important;
   }
 }

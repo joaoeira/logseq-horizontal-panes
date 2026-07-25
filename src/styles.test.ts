@@ -58,4 +58,16 @@ describe('horizontal panes styles', () => {
       /body\.horizontal-panes-pane-resizing[\s\S]*?user-select:\s*none\s*!important/
     );
   });
+
+  it('styles pane history as native-sized header controls and hides it when collapsed', () => {
+    expect(HORIZONTAL_PANES_STYLES).toMatch(
+      /\.horizontal-panes-history-controls[\s\S]*?display:\s*inline-flex/
+    );
+    expect(HORIZONTAL_PANES_STYLES).toMatch(
+      /\.horizontal-panes-history-controls\s*>\s*button[\s\S]*?width:\s*32px[\s\S]*?height:\s*32px/
+    );
+    expect(HORIZONTAL_PANES_STYLES).toMatch(
+      /\.sidebar-item\.collapsed\s+\.horizontal-panes-history-controls[\s\S]*?display:\s*none\s*!important/
+    );
+  });
 });

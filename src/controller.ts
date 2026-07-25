@@ -8,6 +8,7 @@ const MANUAL_WIDTH_CLASS = 'horizontal-panes-manual-width';
 const RESIZE_TARGET_CLASS = 'horizontal-panes-resize-target';
 const RESIZE_TARGET_BODY_CLASS = 'horizontal-panes-pane-resize-target';
 const RESIZING_BODY_CLASS = 'horizontal-panes-pane-resizing';
+const HISTORY_CONTROLS_CLASS = 'horizontal-panes-history-controls';
 const SIDEBAR_LIST_SELECTOR = '.sidebar-item-list';
 const PANE_SELECTOR = ':scope > .sidebar-item';
 const APP_CONTAINER_SELECTOR = '#app-container';
@@ -32,10 +33,22 @@ const BLOCK_ACTIVATOR_SELECTORS = [
 ] as const;
 
 type EditorBookmark = {
-  block: HTMLElement;
+  block: HTMLElement | null;
   blockId: string | null;
   selectionStart: number | null;
   selectionEnd: number | null;
+};
+
+type PaneHistoryEntry = {
+  target: PaneReferenceTarget;
+  reference?: string;
+  scrollTop?: number;
+  editorBookmark?: Omit<EditorBookmark, 'block'>;
+};
+
+type PaneHistorySession = {
+  entries: PaneHistoryEntry[];
+  index: number;
 };
 
 type PaneResizeState = {
@@ -73,6 +86,7 @@ type PendingPaneInsertion = {
   sourcePane: HTMLElement;
   existingPanes: Set<HTMLElement>;
   replacementPane: HTMLElement | null;
+  replacementHistory: PaneHistorySession | null;
   timeout: number | null;
   resolve: () => void;
 };
@@ -110,6 +124,7 @@ export class HorizontalPanesController {
   private editorBookmarks = new WeakMap<HTMLElement, EditorBookmark>();
   private resizeTargetPane: HTMLElement | null = null;
   private paneResize: PaneResizeState | null = null;
+  private paneHistories = new WeakMap<HTMLElement, PaneHistorySession>();
   private pendingReferencePointer: PendingReferencePointer | null = null;
   private pendingBlockPointer: PendingBlockPointer | null = null;
   private suppressedReferenceClick: PaneReferenceActivation | null = null;
@@ -327,7 +342,10 @@ export class HorizontalPanesController {
 
   private ensureSidebarList(focusNewestWhenAttached: boolean): void {
     const nextList = this.getDocument().querySelector<HTMLElement>(SIDEBAR_LIST_SELECTOR);
-    if (nextList === this.sidebarList && nextList?.isConnected) return;
+    if (nextList === this.sidebarList && nextList?.isConnected) {
+      this.getPanes().forEach((pane) => this.attachPaneScrollListener(pane));
+      return;
+    }
 
     this.disconnectSidebarList();
     if (!nextList) return;
@@ -363,6 +381,7 @@ export class HorizontalPanesController {
       );
       pane.style.removeProperty('order');
       pane.style.removeProperty('--horizontal-panes-pane-width-override');
+      pane.querySelector(`.${HISTORY_CONTROLS_CLASS}`)?.remove();
     });
     this.paneScrollListeners.clear();
     this.paneOrder = [];
@@ -453,6 +472,17 @@ export class HorizontalPanesController {
     } else {
       this.paneOrder = [...retainedOrder, ...appendedOrder];
     }
+    if (
+      newestPane &&
+      pendingInsertion?.action === 'replace' &&
+      pendingInsertion.replacementHistory
+    ) {
+      this.paneHistories.set(newestPane, pendingInsertion.replacementHistory);
+      this.restorePaneHistoryEntry(newestPane, pendingInsertion.replacementHistory);
+    }
+    if (newestPane && pendingInsertion?.action === 'replace') {
+      this.transferPaneWidth(pendingInsertion.sourcePane, newestPane);
+    }
     this.applyPaneOrder();
     this.paneOrder.forEach((pane) => this.attachPaneScrollListener(pane));
 
@@ -498,6 +528,11 @@ export class HorizontalPanesController {
     const appContainer = this.getAppContainer();
     if (!appContainer) return;
 
+    const history = this.paneHistories.get(pane);
+    const historyEntry = history?.entries[history.index];
+    if (historyEntry?.scrollTop !== undefined) {
+      pane.scrollTop = historyEntry.scrollTop;
+    }
     this.markActivePane(pane);
     const nextLeft = this.getCenteredScrollLeft(appContainer, pane);
     appContainer.scrollTo({ left: nextLeft, behavior: 'smooth' });
@@ -528,15 +563,108 @@ export class HorizontalPanesController {
   }
 
   private attachPaneScrollListener(pane: HTMLElement): void {
-    if (this.paneScrollListeners.has(pane)) return;
-    pane.addEventListener('scroll', this.handlePaneScroll, { passive: true });
-    this.paneScrollListeners.add(pane);
+    if (!this.paneScrollListeners.has(pane)) {
+      pane.addEventListener('scroll', this.handlePaneScroll, { passive: true });
+      this.paneScrollListeners.add(pane);
+    }
+    this.ensurePaneHistoryControls(pane);
   }
 
-  private readonly handlePaneScroll = (): void => {
+  private readonly handlePaneScroll = (event: Event): void => {
+    const pane = event.currentTarget;
+    if (pane instanceof this.getWindow().HTMLElement) {
+      const history = this.paneHistories.get(pane);
+      const entry = history?.entries[history.index];
+      if (entry) entry.scrollTop = pane.scrollTop;
+    }
     // Logseq DB graphs virtualize sidebar content against this native list.
     this.sidebarList?.dispatchEvent(new Event('scroll'));
   };
+
+  private ensurePaneHistoryControls(pane: HTMLElement): void {
+    const header = pane.querySelector<HTMLElement>('.sidebar-item-header');
+    if (!header) return;
+
+    const history = this.ensurePaneHistory(pane);
+    if (header.querySelector(`.${HISTORY_CONTROLS_CLASS}`)) {
+      this.updatePaneHistoryControls(pane, history);
+      return;
+    }
+
+    const controls = this.getDocument().createElement('span');
+    controls.className = HISTORY_CONTROLS_CLASS;
+    controls.setAttribute('role', 'group');
+    controls.setAttribute('aria-label', 'Pane history');
+
+    controls.append(
+      this.createPaneHistoryButton('back', 'Back in pane'),
+      this.createPaneHistoryButton('forward', 'Forward in pane')
+    );
+
+    const nativeActions = header.querySelector<HTMLElement>(':scope > .item-actions');
+    header.insertBefore(controls, nativeActions);
+    this.updatePaneHistoryControls(pane, history);
+  }
+
+  private createPaneHistoryButton(
+    direction: 'back' | 'forward',
+    label: string
+  ): HTMLButtonElement {
+    const button = this.getDocument().createElement('button');
+    button.type = 'button';
+    button.disabled = true;
+    button.setAttribute('aria-label', label);
+    button.setAttribute('title', label);
+    button.setAttribute('data-horizontal-panes-history', direction);
+    button.innerHTML =
+      direction === 'back'
+        ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"/><path d="M9 12h10"/></svg>'
+        : '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"/><path d="M5 12h10"/></svg>';
+    return button;
+  }
+
+  private ensurePaneHistory(pane: HTMLElement): PaneHistorySession {
+    const existing = this.paneHistories.get(pane);
+    if (existing) return existing;
+
+    const initialEntry = this.getPaneHistoryEntry(pane);
+    const history: PaneHistorySession = initialEntry
+      ? { entries: [initialEntry], index: 0 }
+      : { entries: [], index: -1 };
+    this.paneHistories.set(pane, history);
+    return history;
+  }
+
+  private getPaneHistoryEntry(pane: HTMLElement): PaneHistoryEntry | null {
+    if (pane.classList.contains('item-type-page')) {
+      const header = pane.querySelector<HTMLElement>('.sidebar-item-header');
+      const pageTitle =
+        header?.querySelector<HTMLElement>('button[aria-controls]')?.textContent?.trim() ??
+        '';
+      return pageTitle ? { target: pageTitle, reference: pageTitle } : null;
+    }
+
+    const rootBlock = pane.querySelector<HTMLElement>(BLOCK_SELECTOR);
+    const blockId = rootBlock ? this.getBlockId(rootBlock)?.trim() : null;
+    return blockId ? { target: blockId } : null;
+  }
+
+  private updatePaneHistoryControls(
+    pane: HTMLElement,
+    history: PaneHistorySession = this.ensurePaneHistory(pane)
+  ): void {
+    const back = pane.querySelector<HTMLButtonElement>(
+      'button[data-horizontal-panes-history="back"]'
+    );
+    const forward = pane.querySelector<HTMLButtonElement>(
+      'button[data-horizontal-panes-history="forward"]'
+    );
+    if (back) back.disabled = history.index <= 0;
+    if (forward) {
+      forward.disabled =
+        history.index < 0 || history.index >= history.entries.length - 1;
+    }
+  }
 
   private readonly handleWheel = (event: WheelEvent): void => {
     if (
@@ -736,6 +864,8 @@ export class HorizontalPanesController {
   };
 
   private readonly handleClick = (event: MouseEvent): void => {
+    if (this.handlePaneHistoryClick(event)) return;
+
     const suppressed = this.suppressedReferenceClick;
     if (suppressed) {
       const referenceActivation = this.getPaneReferenceActivation(event.target);
@@ -765,6 +895,34 @@ export class HorizontalPanesController {
       this.clearSuppressedBlockClick();
     }
   };
+
+  private handlePaneHistoryClick(event: MouseEvent): boolean {
+    if (!this.enabled || !(event.target instanceof this.getWindow().Element)) {
+      return false;
+    }
+
+    const button = (event.target as Element).closest<HTMLButtonElement>(
+      'button[data-horizontal-panes-history]'
+    );
+    if (!button || button.disabled) return false;
+
+    const pane = button.closest<HTMLElement>('.sidebar-item');
+    const direction = button.getAttribute('data-horizontal-panes-history');
+    if (
+      !pane ||
+      pane.parentElement !== this.sidebarList ||
+      (direction !== 'back' && direction !== 'forward')
+    ) {
+      return false;
+    }
+
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    this.referenceOpenQueue = this.referenceOpenQueue
+      .catch(() => undefined)
+      .then(() => this.navigatePaneHistory(pane, direction));
+    return true;
+  }
 
   private getPaneReferenceActivation(target: EventTarget | null): PaneReferenceActivation | null {
     if (!(target instanceof this.getWindow().Element)) return null;
@@ -859,6 +1017,70 @@ export class HorizontalPanesController {
     this.suppressedBlockClick = null;
   }
 
+  private async navigatePaneHistory(
+    sourcePane: HTMLElement,
+    direction: 'back' | 'forward'
+  ): Promise<void> {
+    const openReference = this.host.openPaneReference;
+    if (
+      !this.enabled ||
+      !openReference ||
+      !sourcePane.isConnected ||
+      !this.getPanes().includes(sourcePane)
+    ) {
+      return;
+    }
+
+    const history = this.ensurePaneHistory(sourcePane);
+    this.rememberPaneHistoryEntry(sourcePane, history);
+    const nextIndex = history.index + (direction === 'back' ? -1 : 1);
+    const entry = history.entries[nextIndex];
+    if (!entry) return;
+
+    let target = entry.target;
+    if (entry.reference && this.host.resolvePaneReference) {
+      try {
+        target =
+          (await this.host.resolvePaneReference(entry.reference)) ?? entry.target;
+      } catch {
+        return;
+      }
+    }
+    if (!sourcePane.isConnected || !this.getPanes().includes(sourcePane)) return;
+
+    const existingPane = this.findPaneForTarget(target, entry.reference);
+    if (existingPane) {
+      this.scheduleFocus(existingPane);
+      return;
+    }
+
+    const replacementHistory: PaneHistorySession = {
+      entries: [...history.entries],
+      index: nextIndex,
+    };
+    const { pendingInsertion, insertionComplete } = this.beginPendingPaneInsertion(
+      sourcePane,
+      'replace',
+      false,
+      replacementHistory
+    );
+
+    try {
+      await openReference(target);
+    } catch {
+      this.finishPendingPaneInsertion(pendingInsertion);
+      return;
+    }
+
+    if (this.pendingPaneInsertion === pendingInsertion) {
+      pendingInsertion.timeout = window.setTimeout(
+        () => this.finishPendingPaneInsertion(pendingInsertion),
+        1500
+      );
+    }
+    await insertionComplete;
+  }
+
   private async navigatePaneReference(
     reference: string,
     sourcePane: HTMLElement,
@@ -900,10 +1122,15 @@ export class HorizontalPanesController {
       return;
     }
 
+    const replacementHistory =
+      action === 'replace'
+        ? this.getReplacementHistory(sourcePane, { target, reference })
+        : null;
     const { pendingInsertion, insertionComplete } = this.beginPendingPaneInsertion(
       sourcePane,
       action,
-      false
+      false,
+      replacementHistory
     );
 
     try {
@@ -920,6 +1147,76 @@ export class HorizontalPanesController {
       );
     }
     await insertionComplete;
+  }
+
+  private getReplacementHistory(
+    sourcePane: HTMLElement,
+    nextEntry: PaneHistoryEntry
+  ): PaneHistorySession {
+    const history = this.ensurePaneHistory(sourcePane);
+    this.rememberPaneHistoryEntry(sourcePane, history);
+    const retainedEntries =
+      history.index >= 0 ? history.entries.slice(0, history.index + 1) : [];
+    return {
+      entries: [...retainedEntries, nextEntry],
+      index: retainedEntries.length,
+    };
+  }
+
+  private rememberPaneHistoryEntry(
+    pane: HTMLElement,
+    history: PaneHistorySession = this.ensurePaneHistory(pane)
+  ): void {
+    this.rememberCurrentEditor();
+    const entry = history.entries[history.index];
+    if (!entry) return;
+
+    entry.scrollTop = pane.scrollTop;
+    const bookmark = this.editorBookmarks.get(pane);
+    if (bookmark) {
+      entry.editorBookmark = {
+        blockId: bookmark.blockId,
+        selectionStart: bookmark.selectionStart,
+        selectionEnd: bookmark.selectionEnd,
+      };
+    }
+  }
+
+  private restorePaneHistoryEntry(
+    pane: HTMLElement,
+    history: PaneHistorySession
+  ): void {
+    const entry = history.entries[history.index];
+    if (!entry) return;
+
+    if (entry.scrollTop !== undefined) {
+      pane.scrollTop = entry.scrollTop;
+    }
+    if (!entry.editorBookmark) {
+      this.editorBookmarks.delete(pane);
+      return;
+    }
+
+    const block =
+      Array.from(pane.querySelectorAll<HTMLElement>(BLOCK_SELECTOR)).find(
+        (candidate) => this.getBlockId(candidate) === entry.editorBookmark?.blockId
+      ) ?? null;
+    this.editorBookmarks.set(pane, {
+      block,
+      ...entry.editorBookmark,
+    });
+  }
+
+  private transferPaneWidth(sourcePane: HTMLElement, targetPane: HTMLElement): void {
+    if (!sourcePane.classList.contains(MANUAL_WIDTH_CLASS)) return;
+
+    const width = sourcePane.style.getPropertyValue(
+      '--horizontal-panes-pane-width-override'
+    );
+    if (!width) return;
+
+    targetPane.style.setProperty('--horizontal-panes-pane-width-override', width);
+    targetPane.classList.add(MANUAL_WIDTH_CLASS);
   }
 
   private findPaneForTarget(
@@ -963,7 +1260,8 @@ export class HorizontalPanesController {
   private beginPendingPaneInsertion(
     sourcePane: HTMLElement,
     action: PaneReferenceAction,
-    startTimeout: boolean
+    startTimeout: boolean,
+    replacementHistory: PaneHistorySession | null = null
   ): {
     pendingInsertion: PendingPaneInsertion;
     insertionComplete: Promise<void>;
@@ -977,6 +1275,7 @@ export class HorizontalPanesController {
       sourcePane,
       existingPanes: new Set(this.getNativePanes()),
       replacementPane: null,
+      replacementHistory,
       timeout: null,
       resolve: resolveInsertion,
     };
@@ -1367,7 +1666,10 @@ export class HorizontalPanesController {
     bookmark: EditorBookmark | undefined
   ): HTMLElement | null {
     if (!bookmark) return null;
-    if (bookmark.block.isConnected && container.contains(bookmark.block)) {
+    if (
+      bookmark.block?.isConnected &&
+      container.contains(bookmark.block)
+    ) {
       return bookmark.block;
     }
     if (!bookmark.blockId) return null;

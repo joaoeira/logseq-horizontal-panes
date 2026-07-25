@@ -179,6 +179,291 @@ describe('HorizontalPanesController', () => {
     controller.destroy();
   });
 
+  it('adds disabled Back and Forward controls to each native pane header', () => {
+    const { list } = installFixture();
+    const pane = createBlockPane('A');
+    const nativeActions = pane.querySelector<HTMLElement>('.item-actions')!;
+    list.append(pane);
+
+    const controller = new HorizontalPanesController(options);
+    controller.setEnabled(true);
+
+    const controls = pane.querySelector<HTMLElement>(
+      '.horizontal-panes-history-controls'
+    );
+    const back = pane.querySelector<HTMLButtonElement>(
+      'button[data-horizontal-panes-history="back"]'
+    );
+    const forward = pane.querySelector<HTMLButtonElement>(
+      'button[data-horizontal-panes-history="forward"]'
+    );
+
+    expect(controls).not.toBeNull();
+    expect(controls?.nextElementSibling).toBe(nativeActions);
+    expect(back?.getAttribute('aria-label')).toBe('Back in pane');
+    expect(forward?.getAttribute('aria-label')).toBe('Forward in pane');
+    expect(back?.disabled).toBe(true);
+    expect(forward?.disabled).toBe(true);
+    controller.destroy();
+  });
+
+  it('restores pane history controls after Logseq rerenders a native header', () => {
+    const { list } = installFixture();
+    const pane = createBlockPane('A');
+    list.append(pane);
+
+    const controller = new HorizontalPanesController(options);
+    controller.setEnabled(true);
+    pane.querySelector('.horizontal-panes-history-controls')?.remove();
+
+    vi.advanceTimersByTime(400);
+
+    expect(pane.querySelector('.horizontal-panes-history-controls')).not.toBeNull();
+    controller.destroy();
+  });
+
+  it('moves a replaced pane backward and forward through its own history', async () => {
+    const { list } = installFixture();
+    const paneA = createBlockPane('A', 'B');
+    list.append(paneA);
+    const openPaneReference = vi.fn(async (target: string | number) => {
+      list.prepend(createBlockPane(String(target)));
+    });
+
+    const controller = new HorizontalPanesController(navigationOptions, {
+      openPaneReference,
+    });
+    controller.setEnabled(true);
+
+    const childBullet = paneA.querySelector<HTMLElement>('.bullet')!;
+    dispatchPointer(childBullet, 'pointerdown');
+    dispatchPointer(childBullet, 'pointerup');
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+
+    const paneB = list.querySelector<HTMLElement>(
+      '.sidebar-item .ls-block[blockid="B"]'
+    )!.closest<HTMLElement>('.sidebar-item')!;
+    const back = paneB.querySelector<HTMLButtonElement>(
+      'button[data-horizontal-panes-history="back"]'
+    )!;
+    expect(back.disabled).toBe(false);
+
+    back.click();
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+
+    expect(openPaneReference.mock.calls.map(([target]) => target)).toEqual(['B', 'A']);
+    const restoredPaneA = list.querySelector<HTMLElement>(
+      '.sidebar-item .ls-block[blockid="A"]'
+    )!.closest<HTMLElement>('.sidebar-item')!;
+    const forward = restoredPaneA.querySelector<HTMLButtonElement>(
+      'button[data-horizontal-panes-history="forward"]'
+    )!;
+    expect(list.querySelectorAll(':scope > .sidebar-item')).toHaveLength(1);
+    expect(restoredPaneA.style.order).toBe('0');
+    expect(
+      restoredPaneA.querySelector<HTMLButtonElement>(
+        'button[data-horizontal-panes-history="back"]'
+      )?.disabled
+    ).toBe(true);
+    expect(forward.disabled).toBe(false);
+
+    forward.click();
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+
+    const restoredPaneB = list.querySelector<HTMLElement>(
+      '.sidebar-item .ls-block[blockid="B"]'
+    )!.closest<HTMLElement>('.sidebar-item')!;
+    expect(openPaneReference.mock.calls.map(([target]) => target)).toEqual([
+      'B',
+      'A',
+      'B',
+    ]);
+    expect(
+      restoredPaneB.querySelector<HTMLButtonElement>(
+        'button[data-horizontal-panes-history="back"]'
+      )?.disabled
+    ).toBe(false);
+    expect(
+      restoredPaneB.querySelector<HTMLButtonElement>(
+        'button[data-horizontal-panes-history="forward"]'
+      )?.disabled
+    ).toBe(true);
+    controller.destroy();
+  });
+
+  it('discards the old Forward branch after navigating from a historical target', async () => {
+    const { list } = installFixture();
+    const paneA = createBlockPane('A', 'B');
+    list.append(paneA);
+    let openedB = 0;
+    const openPaneReference = vi.fn(async (target: string | number) => {
+      const blockId = String(target);
+      const childBlockId =
+        blockId === 'B' ? (++openedB === 1 ? 'C' : 'D') : undefined;
+      list.prepend(createBlockPane(blockId, childBlockId));
+    });
+
+    const controller = new HorizontalPanesController(navigationOptions, {
+      openPaneReference,
+    });
+    controller.setEnabled(true);
+
+    const navigateBullet = async (pane: HTMLElement): Promise<void> => {
+      const bullet = pane.querySelector<HTMLElement>('.bullet')!;
+      dispatchPointer(bullet, 'pointerdown');
+      dispatchPointer(bullet, 'pointerup');
+      await flushMutationAndFrames();
+      await flushMutationAndFrames();
+    };
+
+    await navigateBullet(paneA);
+    const firstPaneB = list.querySelector<HTMLElement>(
+      '.sidebar-item .ls-block[blockid="B"]'
+    )!.closest<HTMLElement>('.sidebar-item')!;
+    await navigateBullet(firstPaneB);
+
+    const paneC = list.querySelector<HTMLElement>(
+      '.sidebar-item .ls-block[blockid="C"]'
+    )!.closest<HTMLElement>('.sidebar-item')!;
+    paneC
+      .querySelector<HTMLButtonElement>(
+        'button[data-horizontal-panes-history="back"]'
+      )!
+      .click();
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+
+    const historicalPaneB = list.querySelector<HTMLElement>(
+      '.sidebar-item .ls-block[blockid="B"]'
+    )!.closest<HTMLElement>('.sidebar-item')!;
+    await navigateBullet(historicalPaneB);
+
+    const paneD = list.querySelector<HTMLElement>(
+      '.sidebar-item .ls-block[blockid="D"]'
+    )!.closest<HTMLElement>('.sidebar-item')!;
+    expect(openPaneReference.mock.calls.map(([target]) => target)).toEqual([
+      'B',
+      'C',
+      'B',
+      'D',
+    ]);
+    expect(
+      paneD.querySelector<HTMLButtonElement>(
+        'button[data-horizontal-panes-history="forward"]'
+      )?.disabled
+    ).toBe(true);
+    controller.destroy();
+  });
+
+  it('restores a pane scroll position and caret when returning through history', async () => {
+    const { list } = installFixture();
+    const createEditablePane = (blockId: string, childBlockId?: string): HTMLElement => {
+      const pane = createBlockPane(blockId, childBlockId);
+      const rootBlock = pane.querySelector<HTMLElement>(
+        `.ls-block[blockid="${blockId}"]`
+      )!;
+      const editor = document.createElement('textarea');
+      editor.className = 'block-editor';
+      editor.value = `${blockId} editable text`;
+      rootBlock.append(editor);
+      return pane;
+    };
+    const paneA = createEditablePane('A', 'B');
+    list.append(paneA);
+    const openPaneReference = vi.fn(async (target: string | number) => {
+      list.prepend(createEditablePane(String(target)));
+    });
+
+    const controller = new HorizontalPanesController(navigationOptions, {
+      openPaneReference,
+    });
+    controller.setEnabled(true);
+
+    paneA.scrollTop = 140;
+    const editorA = paneA.querySelector<HTMLTextAreaElement>('textarea')!;
+    editorA.focus();
+    editorA.setSelectionRange(2, 5);
+    const childBullet = paneA.querySelector<HTMLElement>('.bullet')!;
+    dispatchPointer(childBullet, 'pointerdown');
+    dispatchPointer(childBullet, 'pointerup');
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+
+    const paneB = list.querySelector<HTMLElement>(
+      '.sidebar-item .ls-block[blockid="B"]'
+    )!.closest<HTMLElement>('.sidebar-item')!;
+    paneB
+      .querySelector<HTMLButtonElement>(
+        'button[data-horizontal-panes-history="back"]'
+      )!
+      .click();
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+    await flushEditorFrames();
+
+    const restoredPaneA = list.querySelector<HTMLElement>(
+      '.sidebar-item .ls-block[blockid="A"]'
+    )!.closest<HTMLElement>('.sidebar-item')!;
+    const restoredEditor = restoredPaneA.querySelector<HTMLTextAreaElement>('textarea')!;
+    expect(restoredPaneA.scrollTop).toBe(140);
+    expect(document.activeElement).toBe(restoredEditor);
+    expect(restoredEditor.selectionStart).toBe(2);
+    expect(restoredEditor.selectionEnd).toBe(5);
+    controller.destroy();
+  });
+
+  it('keeps a pane manual width while navigating through its history', async () => {
+    const { list } = installFixture();
+    const paneA = createBlockPane('A', 'B');
+    paneA.classList.add('horizontal-panes-manual-width');
+    paneA.style.setProperty('--horizontal-panes-pane-width-override', '920px');
+    list.append(paneA);
+    const openPaneReference = vi.fn(async (target: string | number) => {
+      list.prepend(createBlockPane(String(target)));
+    });
+
+    const controller = new HorizontalPanesController(navigationOptions, {
+      openPaneReference,
+    });
+    controller.setEnabled(true);
+
+    const childBullet = paneA.querySelector<HTMLElement>('.bullet')!;
+    dispatchPointer(childBullet, 'pointerdown');
+    dispatchPointer(childBullet, 'pointerup');
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+
+    const paneB = list.querySelector<HTMLElement>(
+      '.sidebar-item .ls-block[blockid="B"]'
+    )!.closest<HTMLElement>('.sidebar-item')!;
+    expect(paneB.classList.contains('horizontal-panes-manual-width')).toBe(true);
+    expect(
+      paneB.style.getPropertyValue('--horizontal-panes-pane-width-override')
+    ).toBe('920px');
+
+    paneB
+      .querySelector<HTMLButtonElement>(
+        'button[data-horizontal-panes-history="back"]'
+      )!
+      .click();
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+
+    const restoredPaneA = list.querySelector<HTMLElement>(
+      '.sidebar-item .ls-block[blockid="A"]'
+    )!.closest<HTMLElement>('.sidebar-item')!;
+    expect(restoredPaneA.classList.contains('horizontal-panes-manual-width')).toBe(
+      true
+    );
+    expect(
+      restoredPaneA.style.getPropertyValue('--horizontal-panes-pane-width-override')
+    ).toBe('920px');
+    controller.destroy();
+  });
+
   it('focuses a newly prepended native pane at its visual right-hand position', async () => {
     const { list, scrollTo } = installFixture();
     const olderPane = document.createElement('div');
@@ -304,6 +589,60 @@ describe('HorizontalPanesController', () => {
     expect(paneB.style.order).toBe('1');
     expect(paneD.style.order).toBe('2');
     expect(paneC.style.order).toBe('3');
+    expect(
+      paneD.querySelector<HTMLButtonElement>(
+        'button[data-horizontal-panes-history="back"]'
+      )?.disabled
+    ).toBe(true);
+    expect(
+      paneD.querySelector<HTMLButtonElement>(
+        'button[data-horizontal-panes-history="forward"]'
+      )?.disabled
+    ).toBe(true);
+    controller.destroy();
+  });
+
+  it('focuses an already-open historical target without consuming pane history', async () => {
+    const { list } = installFixture();
+    const paneA = createBlockPane('A', 'B');
+    list.append(paneA);
+    const openPaneReference = vi.fn(async (target: string | number) => {
+      list.prepend(createBlockPane(String(target)));
+    });
+
+    const controller = new HorizontalPanesController(navigationOptions, {
+      openPaneReference,
+    });
+    controller.setEnabled(true);
+
+    const childBullet = paneA.querySelector<HTMLElement>('.bullet')!;
+    dispatchPointer(childBullet, 'pointerdown');
+    dispatchPointer(childBullet, 'pointerup');
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+
+    const paneB = list.querySelector<HTMLElement>(
+      '.sidebar-item .ls-block[blockid="B"]'
+    )!.closest<HTMLElement>('.sidebar-item')!;
+    const separatelyOpenedPaneA = createBlockPane('A');
+    list.prepend(separatelyOpenedPaneA);
+    await flushMutationAndFrames();
+
+    const back = paneB.querySelector<HTMLButtonElement>(
+      'button[data-horizontal-panes-history="back"]'
+    )!;
+    back.click();
+    await flushMutationAndFrames();
+
+    expect(openPaneReference.mock.calls.map(([target]) => target)).toEqual(['B']);
+    expect(list.querySelectorAll(':scope > .sidebar-item')).toHaveLength(2);
+    expect(paneB.isConnected).toBe(true);
+    expect(paneB.style.order).toBe('0');
+    expect(separatelyOpenedPaneA.style.order).toBe('1');
+    expect(separatelyOpenedPaneA.classList.contains('horizontal-panes-active-pane')).toBe(
+      true
+    );
+    expect(back.disabled).toBe(false);
     controller.destroy();
   });
 
@@ -338,6 +677,71 @@ describe('HorizontalPanesController', () => {
     expect(sourcePane.style.order).toBe('0');
     expect(targetPane.style.order).toBe('1');
     expect(targetPane.classList.contains('horizontal-panes-active-pane')).toBe(true);
+    controller.destroy();
+  });
+
+  it('returns from a block to an initial page target in the same pane slot', async () => {
+    const { list } = installFixture();
+    const pagePane = createPagePane('Page A');
+    pagePane.querySelector('.ls-block')!.innerHTML = `
+      <div class="block-content">
+        <span class="page-reference" data-ref="Target B">
+          <a class="page-ref" data-ref="Target B">Target B</a>
+        </span>
+      </div>
+    `;
+    list.append(pagePane);
+    const resolvePaneReference = vi.fn(async (reference: string) =>
+      reference === 'Page A' ? 'page-a-uuid' : 'B'
+    );
+    const openPaneReference = vi.fn(async (target: string | number) => {
+      list.prepend(
+        String(target) === 'page-a-uuid'
+          ? createPagePane('Page A')
+          : createBlockPane(String(target))
+      );
+    });
+
+    const controller = new HorizontalPanesController(navigationOptions, {
+      resolvePaneReference,
+      openPaneReference,
+    });
+    controller.setEnabled(true);
+
+    const pageReference = pagePane.querySelector<HTMLElement>('.page-ref')!;
+    dispatchPointer(pageReference, 'pointerdown');
+    dispatchPointer(pageReference, 'pointerup');
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+
+    const paneB = list.querySelector<HTMLElement>(
+      '.sidebar-item .ls-block[blockid="B"]'
+    )!.closest<HTMLElement>('.sidebar-item')!;
+    paneB
+      .querySelector<HTMLButtonElement>(
+        'button[data-horizontal-panes-history="back"]'
+      )!
+      .click();
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+
+    const restoredPage = list.querySelector<HTMLElement>(
+      '.sidebar-item.item-type-page'
+    )!;
+    expect(openPaneReference.mock.calls.map(([target]) => target)).toEqual([
+      'B',
+      'page-a-uuid',
+    ]);
+    expect(resolvePaneReference.mock.calls.map(([reference]) => reference)).toEqual([
+      'Target B',
+      'Page A',
+    ]);
+    expect(restoredPage.style.order).toBe('0');
+    expect(
+      restoredPage.querySelector<HTMLButtonElement>(
+        'button[data-horizontal-panes-history="forward"]'
+      )?.disabled
+    ).toBe(false);
     controller.destroy();
   });
 

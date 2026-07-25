@@ -218,6 +218,48 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
     backdrop-filter: blur(12px);
   }
 
+  body.horizontal-panes-active .horizontal-panes-history-controls {
+    display: inline-flex;
+    flex: 0 0 auto;
+    align-items: center;
+    gap: 2px;
+    margin-left: auto;
+  }
+
+  body.horizontal-panes-active .horizontal-panes-history-controls > button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    margin: 0;
+    padding: 6px;
+    color: var(--ls-secondary-text-color);
+    border: 0;
+    border-radius: 5px;
+    background: transparent;
+  }
+
+  body.horizontal-panes-active .horizontal-panes-history-controls > button:hover:not(:disabled) {
+    color: var(--ls-primary-text-color);
+    background: color-mix(in srgb, var(--ls-primary-text-color) 8%, transparent);
+  }
+
+  body.horizontal-panes-active .horizontal-panes-history-controls > button:disabled {
+    opacity: 0.3;
+    cursor: default;
+  }
+
+  body.horizontal-panes-active .horizontal-panes-history-controls > button > svg {
+    width: 20px;
+    height: 20px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
   body.horizontal-panes-active .sidebar-item .sidebar-panel-content {
     padding-bottom: 72px;
   }
@@ -250,6 +292,10 @@ export const HORIZONTAL_PANES_STYLES = String.raw`
   }
 
   body.horizontal-panes-active .sidebar-item.collapsed .sidebar-item-header .item-actions {
+    display: none !important;
+  }
+
+  body.horizontal-panes-active .sidebar-item.collapsed .horizontal-panes-history-controls {
     display: none !important;
   }
 }
