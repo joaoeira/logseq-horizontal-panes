@@ -49,7 +49,11 @@ horizontal scroll range permits it.
 
 The main-page width, sidebar-pane width, the gap after the main page, the gap
 between sidebar panes, and optional scroll snapping are independently
-configurable in the plugin settings.
+configurable in the plugin settings. With the default-off **Navigate links
+within panes** setting, plain-clicking a page, tag, block reference, or block
+bullet replaces its pane, while Shift-clicking inserts a new pane immediately
+to its right. If the target is already open, the existing pane is moved into
+that position instead of asking Logseq to create a duplicate.
 
 Drag the right border of any expanded sidebar pane to give it an individual
 width for the current session. The resize target extends into the surrounding

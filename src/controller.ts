@@ -46,16 +46,52 @@ type PaneResizeState = {
   captureTarget: Element | null;
 };
 
+type PaneReferenceActivation = {
+  pane: HTMLElement;
+  reference: string;
+};
+
+type PaneBlockActivation = {
+  pane: HTMLElement;
+  blockId: string;
+};
+
+type PaneReferenceAction = 'replace' | 'insert';
+
+type PendingReferencePointer = PaneReferenceActivation & {
+  action: PaneReferenceAction;
+  pointerId: number;
+};
+
+type PendingBlockPointer = PaneBlockActivation & {
+  action: PaneReferenceAction;
+  pointerId: number;
+};
+
+type PendingPaneInsertion = {
+  action: PaneReferenceAction;
+  sourcePane: HTMLElement;
+  existingPanes: Set<HTMLElement>;
+  replacementPane: HTMLElement | null;
+  timeout: number | null;
+  resolve: () => void;
+};
+
+export type PaneReferenceTarget = string | number;
+
 export type HorizontalPanesOptions = {
   mainWidthPx: number;
   paneWidthPx: number;
   paneGapPx: number;
   mainPaneGapPx: number;
   scrollSnap: boolean;
+  openPaneLinks: boolean;
 };
 
 export type HorizontalPanesHost = {
   commitCurrentEditor?: () => Promise<void>;
+  resolvePaneReference?: (reference: string) => Promise<PaneReferenceTarget | null>;
+  openPaneReference?: (target: PaneReferenceTarget) => Promise<void>;
 };
 
 export class HorizontalPanesController {
@@ -74,6 +110,14 @@ export class HorizontalPanesController {
   private editorBookmarks = new WeakMap<HTMLElement, EditorBookmark>();
   private resizeTargetPane: HTMLElement | null = null;
   private paneResize: PaneResizeState | null = null;
+  private pendingReferencePointer: PendingReferencePointer | null = null;
+  private pendingBlockPointer: PendingBlockPointer | null = null;
+  private suppressedReferenceClick: PaneReferenceActivation | null = null;
+  private suppressedReferenceClickTimer: number | null = null;
+  private suppressedBlockClick: PaneBlockActivation | null = null;
+  private suppressedBlockClickTimer: number | null = null;
+  private pendingPaneInsertion: PendingPaneInsertion | null = null;
+  private referenceOpenQueue: Promise<void> = Promise.resolve();
 
   constructor(options: HorizontalPanesOptions, host: HorizontalPanesHost = {}) {
     this.options = options;
@@ -203,6 +247,7 @@ export class HorizontalPanesController {
     });
     this.getDocument().addEventListener('pointerup', this.handlePointerUp, true);
     this.getDocument().addEventListener('pointercancel', this.handlePointerCancel, true);
+    this.getDocument().addEventListener('click', this.handleClick, true);
     this.getDocument().addEventListener('dblclick', this.handleDoubleClick, true);
     this.getDocument().addEventListener('focusin', this.handleFocusIn, true);
     this.getDocument().addEventListener('focusout', this.handleFocusOut, true);
@@ -233,6 +278,7 @@ export class HorizontalPanesController {
     document.removeEventListener('pointermove', this.handlePointerMove, true);
     document.removeEventListener('pointerup', this.handlePointerUp, true);
     document.removeEventListener('pointercancel', this.handlePointerCancel, true);
+    document.removeEventListener('click', this.handleClick, true);
     document.removeEventListener('dblclick', this.handleDoubleClick, true);
     document.removeEventListener('focusin', this.handleFocusIn, true);
     document.removeEventListener('focusout', this.handleFocusOut, true);
@@ -255,6 +301,11 @@ export class HorizontalPanesController {
     }
     this.editorRestoreGeneration += 1;
     this.pendingOutgoingCommit = null;
+    this.pendingReferencePointer = null;
+    this.pendingBlockPointer = null;
+    this.clearSuppressedReferenceClick();
+    this.clearSuppressedBlockClick();
+    this.finishPendingPaneInsertion();
 
     this.disconnectSidebarList();
     this.focusMain('auto', false);
@@ -320,6 +371,7 @@ export class HorizontalPanesController {
 
   private readonly handleSidebarMutations = (mutations: MutationRecord[]): void => {
     const addedPanes = new Set<HTMLElement>();
+    const removedPanes = new Set<HTMLElement>();
 
     for (const mutation of mutations) {
       for (const node of mutation.addedNodes) {
@@ -332,10 +384,28 @@ export class HorizontalPanesController {
           .querySelectorAll<HTMLElement>('.sidebar-item')
           .forEach((pane) => addedPanes.add(pane));
       }
+      for (const node of mutation.removedNodes) {
+        if (!(node instanceof this.getWindow().Element)) continue;
+        const element = node as Element;
+        if (element.matches('.sidebar-item')) {
+          removedPanes.add(element as HTMLElement);
+        }
+        element
+          .querySelectorAll<HTMLElement>('.sidebar-item')
+          .forEach((pane) => removedPanes.add(pane));
+      }
     }
 
     const nativePanes = this.getNativePanes();
     const currentPanes = new Set(nativePanes);
+    const pendingInsertion = this.pendingPaneInsertion;
+    const insertedPanes = new Set(
+      [...addedPanes].filter(
+        (pane) =>
+          !removedPanes.has(pane) &&
+          !pendingInsertion?.existingPanes.has(pane)
+      )
+    );
     if (this.paneResize && !currentPanes.has(this.paneResize.pane)) {
       this.finishPaneResize();
     }
@@ -356,19 +426,54 @@ export class HorizontalPanesController {
       this.paneScrollListeners.delete(pane);
     });
     const retainedOrder = this.paneOrder.filter(
-      (pane) => currentPanes.has(pane) && !addedPanes.has(pane)
+      (pane) => currentPanes.has(pane) && !insertedPanes.has(pane)
     );
     const appendedOrder = nativePanes
-      .filter((pane) => addedPanes.has(pane) || !retainedOrder.includes(pane))
+      .filter((pane) => insertedPanes.has(pane) || !retainedOrder.includes(pane))
       .reverse();
+    const newestPane = nativePanes.find((pane) => insertedPanes.has(pane));
+    const sourceIndex = pendingInsertion
+      ? retainedOrder.indexOf(pendingInsertion.sourcePane)
+      : -1;
+    const replacementSourceRemoved = Boolean(
+      pendingInsertion?.action === 'replace' &&
+        pendingInsertion.replacementPane &&
+        !currentPanes.has(pendingInsertion.sourcePane)
+    );
 
-    this.paneOrder = [...retainedOrder, ...appendedOrder];
+    if (newestPane && sourceIndex >= 0 && pendingInsertion) {
+      const insertionIndex =
+        pendingInsertion.action === 'replace' ? sourceIndex : sourceIndex + 1;
+      this.paneOrder = [
+        ...retainedOrder.slice(0, insertionIndex),
+        newestPane,
+        ...retainedOrder.slice(insertionIndex),
+        ...appendedOrder.filter((pane) => pane !== newestPane),
+      ];
+    } else {
+      this.paneOrder = [...retainedOrder, ...appendedOrder];
+    }
     this.applyPaneOrder();
     this.paneOrder.forEach((pane) => this.attachPaneScrollListener(pane));
 
-    const newestPane = nativePanes.find((pane) => addedPanes.has(pane));
     if (newestPane) {
+      if (pendingInsertion?.action === 'replace') {
+        if (sourceIndex >= 0) {
+          pendingInsertion.replacementPane = newestPane;
+          if (!this.closeNativePane(pendingInsertion.sourcePane)) {
+            console.warn('Horizontal Panes could not find the native pane close control');
+          }
+        } else {
+          this.finishPendingPaneInsertion(pendingInsertion);
+        }
+      } else if (pendingInsertion) {
+        this.finishPendingPaneInsertion(pendingInsertion);
+      }
       this.scheduleFocus(newestPane);
+    }
+
+    if (replacementSourceRemoved && pendingInsertion) {
+      this.finishPendingPaneInsertion(pendingInsertion);
     }
   };
 
@@ -453,6 +558,8 @@ export class HorizontalPanesController {
   };
 
   private readonly handlePointerDown = (event: PointerEvent): void => {
+    this.pendingReferencePointer = null;
+    this.pendingBlockPointer = null;
     if (!this.enabled || event.button !== 0) return;
 
     const resizePane = this.findPaneResizeTarget(event.clientX, event.clientY);
@@ -464,6 +571,32 @@ export class HorizontalPanesController {
     const target = event.target;
     if (!(target instanceof this.getWindow().Element)) return;
     const targetElement = target as Element;
+    const referenceActivation = this.getPaneReferenceActivation(targetElement);
+    const blockActivation = this.getPaneBlockActivation(targetElement);
+    const referenceAction = this.isUnmodifiedPrimaryEvent(event)
+      ? 'replace'
+      : this.isShiftPrimaryEvent(event)
+        ? 'insert'
+        : null;
+    if (this.options.openPaneLinks && referenceAction && referenceActivation) {
+      this.pendingReferencePointer = {
+        ...referenceActivation,
+        action: referenceAction,
+        pointerId: event.pointerId,
+      };
+      // Own both navigation variants. Some Logseq versions act during pointer-down,
+      // which would race the plugin's visual insertion transaction.
+      event.stopImmediatePropagation();
+    }
+
+    if (this.options.openPaneLinks && referenceAction && blockActivation) {
+      this.pendingBlockPointer = {
+        ...blockActivation,
+        action: referenceAction,
+        pointerId: event.pointerId,
+      };
+      event.stopImmediatePropagation();
+    }
 
     const pane = targetElement.closest<HTMLElement>('.sidebar-item');
     if (pane && this.sidebarList?.contains(pane)) {
@@ -509,18 +642,434 @@ export class HorizontalPanesController {
   };
 
   private readonly handlePointerUp = (event: PointerEvent): void => {
-    if (!this.paneResize || event.pointerId !== this.paneResize.pointerId) return;
+    if (this.paneResize && event.pointerId === this.paneResize.pointerId) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.finishPaneResize();
+      this.setResizeTarget(this.findPaneResizeTarget(event.clientX, event.clientY));
+      return;
+    }
+
+    const referencePointer = this.pendingReferencePointer;
+    this.pendingReferencePointer = null;
+    if (referencePointer) {
+      if (
+        !this.options.openPaneLinks ||
+        referencePointer.pointerId !== event.pointerId ||
+        (referencePointer.action === 'replace'
+          ? !this.isUnmodifiedPrimaryEvent(event)
+          : !this.isShiftPrimaryEvent(event))
+      ) {
+        return;
+      }
+
+      const activation = this.getPaneReferenceActivation(event.target);
+      if (
+        !activation ||
+        activation.pane !== referencePointer.pane ||
+        activation.reference !== referencePointer.reference
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.suppressNextReferenceClick(activation);
+      this.referenceOpenQueue = this.referenceOpenQueue
+        .catch(() => undefined)
+        .then(() =>
+          this.navigatePaneReference(
+            activation.reference,
+            activation.pane,
+            referencePointer.action
+          )
+        );
+      return;
+    }
+
+    const blockPointer = this.pendingBlockPointer;
+    this.pendingBlockPointer = null;
+    if (
+      !this.options.openPaneLinks ||
+      !blockPointer ||
+      blockPointer.pointerId !== event.pointerId ||
+      (blockPointer.action === 'replace'
+        ? !this.isUnmodifiedPrimaryEvent(event)
+        : !this.isShiftPrimaryEvent(event))
+    ) {
+      return;
+    }
+
+    const blockActivation = this.getPaneBlockActivation(event.target);
+    if (
+      !blockActivation ||
+      blockActivation.pane !== blockPointer.pane ||
+      blockActivation.blockId !== blockPointer.blockId
+    ) {
+      return;
+    }
+
     event.preventDefault();
     event.stopImmediatePropagation();
-    this.finishPaneResize();
-    this.setResizeTarget(this.findPaneResizeTarget(event.clientX, event.clientY));
+    this.suppressNextBlockClick(blockActivation);
+    this.referenceOpenQueue = this.referenceOpenQueue
+      .catch(() => undefined)
+      .then(() =>
+        this.navigatePaneTarget(
+          blockActivation.blockId,
+          blockActivation.pane,
+          blockPointer.action
+        )
+      );
   };
 
   private readonly handlePointerCancel = (event: PointerEvent): void => {
+    if (this.pendingReferencePointer?.pointerId === event.pointerId) {
+      this.pendingReferencePointer = null;
+    }
+    if (this.pendingBlockPointer?.pointerId === event.pointerId) {
+      this.pendingBlockPointer = null;
+    }
     if (!this.paneResize || event.pointerId !== this.paneResize.pointerId) return;
     this.finishPaneResize();
     this.setResizeTarget(null);
   };
+
+  private readonly handleClick = (event: MouseEvent): void => {
+    const suppressed = this.suppressedReferenceClick;
+    if (suppressed) {
+      const referenceActivation = this.getPaneReferenceActivation(event.target);
+      if (
+        referenceActivation &&
+        referenceActivation.pane === suppressed.pane &&
+        referenceActivation.reference === suppressed.reference
+      ) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        this.clearSuppressedReferenceClick();
+        return;
+      }
+    }
+
+    const suppressedBlock = this.suppressedBlockClick;
+    if (!suppressedBlock) return;
+
+    const blockActivation = this.getPaneBlockActivation(event.target);
+    if (
+      blockActivation &&
+      blockActivation.pane === suppressedBlock.pane &&
+      blockActivation.blockId === suppressedBlock.blockId
+    ) {
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.clearSuppressedBlockClick();
+    }
+  };
+
+  private getPaneReferenceActivation(target: EventTarget | null): PaneReferenceActivation | null {
+    if (!(target instanceof this.getWindow().Element)) return null;
+
+    const referenceElement = (target as Element).closest<HTMLElement>(
+      'a.page-ref, a.tag, a.block-ref, .block-ref[data-ref]'
+    );
+    if (!referenceElement) return null;
+
+    const pane = referenceElement.closest<HTMLElement>('.sidebar-item');
+    if (!pane || pane.parentElement !== this.sidebarList) return null;
+
+    const wrapper = referenceElement.closest<HTMLElement>(
+      '.page-reference[data-ref], .block-ref[data-ref]'
+    );
+    const reference =
+      (wrapper && pane.contains(wrapper) ? wrapper.getAttribute('data-ref') : null) ??
+      referenceElement.getAttribute('data-ref');
+    const normalizedReference = reference?.trim();
+    if (!normalizedReference) return null;
+
+    return { pane, reference: normalizedReference };
+  }
+
+  private getPaneBlockActivation(target: EventTarget | null): PaneBlockActivation | null {
+    if (!(target instanceof this.getWindow().Element)) return null;
+
+    const bullet = (target as Element).closest<HTMLElement>(
+      '.bullet-container, .bullet'
+    );
+    if (!bullet) return null;
+
+    const block = bullet.closest<HTMLElement>(BLOCK_SELECTOR);
+    const pane = (block ?? bullet).closest<HTMLElement>('.sidebar-item');
+    const blockId = (this.getBlockId(bullet) ?? (block ? this.getBlockId(block) : null))?.trim();
+    if (!pane || pane.parentElement !== this.sidebarList || !blockId) return null;
+
+    return { pane, blockId };
+  }
+
+  private isUnmodifiedPrimaryEvent(event: MouseEvent): boolean {
+    return (
+      event.button === 0 &&
+      !event.shiftKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey
+    );
+  }
+
+  private isShiftPrimaryEvent(event: MouseEvent): boolean {
+    return (
+      event.button === 0 &&
+      event.shiftKey &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.altKey
+    );
+  }
+
+  private suppressNextReferenceClick(activation: PaneReferenceActivation): void {
+    this.clearSuppressedReferenceClick();
+    this.suppressedReferenceClick = activation;
+    this.suppressedReferenceClickTimer = window.setTimeout(() => {
+      this.suppressedReferenceClick = null;
+      this.suppressedReferenceClickTimer = null;
+    }, 0);
+  }
+
+  private clearSuppressedReferenceClick(): void {
+    if (this.suppressedReferenceClickTimer !== null) {
+      window.clearTimeout(this.suppressedReferenceClickTimer);
+      this.suppressedReferenceClickTimer = null;
+    }
+    this.suppressedReferenceClick = null;
+  }
+
+  private suppressNextBlockClick(activation: PaneBlockActivation): void {
+    this.clearSuppressedBlockClick();
+    this.suppressedBlockClick = activation;
+    this.suppressedBlockClickTimer = window.setTimeout(() => {
+      this.suppressedBlockClick = null;
+      this.suppressedBlockClickTimer = null;
+    }, 0);
+  }
+
+  private clearSuppressedBlockClick(): void {
+    if (this.suppressedBlockClickTimer !== null) {
+      window.clearTimeout(this.suppressedBlockClickTimer);
+      this.suppressedBlockClickTimer = null;
+    }
+    this.suppressedBlockClick = null;
+  }
+
+  private async navigatePaneReference(
+    reference: string,
+    sourcePane: HTMLElement,
+    action: PaneReferenceAction
+  ): Promise<void> {
+    const resolveReference = this.host.resolvePaneReference;
+    const openReference = this.host.openPaneReference;
+    if (!this.enabled || !resolveReference || !openReference) return;
+
+    let target: PaneReferenceTarget | null;
+    try {
+      target = await resolveReference(reference);
+    } catch {
+      return;
+    }
+    if (target === null) return;
+    await this.navigatePaneTarget(target, sourcePane, action, reference);
+  }
+
+  private async navigatePaneTarget(
+    target: PaneReferenceTarget,
+    sourcePane: HTMLElement,
+    action: PaneReferenceAction,
+    reference?: string
+  ): Promise<void> {
+    const openReference = this.host.openPaneReference;
+    if (
+      !this.enabled ||
+      !openReference ||
+      !sourcePane.isConnected ||
+      !this.getPanes().includes(sourcePane)
+    ) {
+      return;
+    }
+
+    const existingPane = this.findPaneForTarget(target, reference);
+    if (existingPane) {
+      this.reusePaneTarget(existingPane, sourcePane, action);
+      return;
+    }
+
+    const { pendingInsertion, insertionComplete } = this.beginPendingPaneInsertion(
+      sourcePane,
+      action,
+      false
+    );
+
+    try {
+      await openReference(target);
+    } catch {
+      this.finishPendingPaneInsertion(pendingInsertion);
+      return;
+    }
+
+    if (this.pendingPaneInsertion === pendingInsertion) {
+      pendingInsertion.timeout = window.setTimeout(
+        () => this.finishPendingPaneInsertion(pendingInsertion),
+        1500
+      );
+    }
+    await insertionComplete;
+  }
+
+  private findPaneForTarget(
+    target: PaneReferenceTarget,
+    reference?: string
+  ): HTMLElement | null {
+    const targetKey = this.normalizeTargetKey(target);
+    const referenceKey = reference ? this.normalizeTargetKey(reference) : null;
+
+    return (
+      this.getPanes().find((pane) => {
+        const rootBlock = pane.querySelector<HTMLElement>(BLOCK_SELECTOR);
+        const rootBlockId = rootBlock ? this.getBlockId(rootBlock) : null;
+        if (
+          rootBlockId &&
+          (this.normalizeTargetKey(rootBlockId) === targetKey ||
+            (referenceKey !== null &&
+              this.normalizeTargetKey(rootBlockId) === referenceKey))
+        ) {
+          return true;
+        }
+
+        if (!referenceKey || !pane.classList.contains('item-type-page')) {
+          return false;
+        }
+
+        const header = pane.querySelector<HTMLElement>('.sidebar-item-header');
+        const pageTitle =
+          header?.querySelector<HTMLElement>('button[aria-controls]')?.textContent ??
+          header?.textContent ??
+          '';
+        return this.normalizeTargetKey(pageTitle) === referenceKey;
+      }) ?? null
+    );
+  }
+
+  private normalizeTargetKey(target: PaneReferenceTarget): string {
+    return String(target).trim().toLocaleLowerCase();
+  }
+
+  private reusePaneTarget(
+    targetPane: HTMLElement,
+    sourcePane: HTMLElement,
+    action: PaneReferenceAction
+  ): void {
+    if (targetPane === sourcePane) {
+      this.scheduleFocus(targetPane);
+      return;
+    }
+
+    const panes = this.getPanes();
+    if (!panes.includes(targetPane) || !panes.includes(sourcePane)) return;
+
+    let nextOrder: HTMLElement[];
+    if (action === 'replace') {
+      const sourceIndex = panes.indexOf(sourcePane);
+      const insertionIndex = panes
+        .slice(0, sourceIndex)
+        .filter((pane) => pane !== targetPane).length;
+      const remainingPanes = panes.filter(
+        (pane) => pane !== targetPane && pane !== sourcePane
+      );
+      nextOrder = [
+        ...remainingPanes.slice(0, insertionIndex),
+        targetPane,
+        ...remainingPanes.slice(insertionIndex),
+      ];
+
+      if (!this.closeNativePane(sourcePane)) {
+        console.warn('Horizontal Panes could not find the native pane close control');
+        this.scheduleFocus(targetPane);
+        return;
+      }
+    } else {
+      const remainingPanes = panes.filter((pane) => pane !== targetPane);
+      const sourceIndex = remainingPanes.indexOf(sourcePane);
+      nextOrder = [
+        ...remainingPanes.slice(0, sourceIndex + 1),
+        targetPane,
+        ...remainingPanes.slice(sourceIndex + 1),
+      ];
+    }
+
+    this.paneOrder = action === 'replace' && sourcePane.isConnected
+      ? [...nextOrder, sourcePane]
+      : nextOrder;
+    this.applyPaneOrder();
+    this.scheduleFocus(targetPane);
+  }
+
+  private beginPendingPaneInsertion(
+    sourcePane: HTMLElement,
+    action: PaneReferenceAction,
+    startTimeout: boolean
+  ): {
+    pendingInsertion: PendingPaneInsertion;
+    insertionComplete: Promise<void>;
+  } {
+    let resolveInsertion = (): void => undefined;
+    const insertionComplete = new Promise<void>((resolve) => {
+      resolveInsertion = resolve;
+    });
+    const pendingInsertion: PendingPaneInsertion = {
+      action,
+      sourcePane,
+      existingPanes: new Set(this.getNativePanes()),
+      replacementPane: null,
+      timeout: null,
+      resolve: resolveInsertion,
+    };
+    this.finishPendingPaneInsertion();
+    this.pendingPaneInsertion = pendingInsertion;
+    if (startTimeout) {
+      pendingInsertion.timeout = window.setTimeout(
+        () => this.finishPendingPaneInsertion(pendingInsertion),
+        1500
+      );
+    }
+    return { pendingInsertion, insertionComplete };
+  }
+
+  private closeNativePane(pane: HTMLElement): boolean {
+    const closeIcon = pane.querySelector<HTMLElement>(
+      '.sidebar-item-header .item-actions .icon-tabler-x, ' +
+        '.sidebar-item-header .item-actions .ti-x, ' +
+        '.sidebar-item-header .item-actions [data-icon="x"]'
+    );
+    const closeControl =
+      closeIcon?.closest<HTMLElement>('button, a') ??
+      pane.querySelector<HTMLElement>('.sidebar-item-header .close') ??
+      Array.from(
+        pane.querySelectorAll<HTMLElement>('.sidebar-item-header .item-actions button')
+      ).at(-1) ??
+      null;
+    if (!closeControl) return false;
+
+    closeControl.click();
+    return true;
+  }
+
+  private finishPendingPaneInsertion(
+    pendingInsertion: PendingPaneInsertion | null = this.pendingPaneInsertion
+  ): void {
+    if (!pendingInsertion || this.pendingPaneInsertion !== pendingInsertion) return;
+    if (pendingInsertion.timeout !== null) {
+      window.clearTimeout(pendingInsertion.timeout);
+    }
+    this.pendingPaneInsertion = null;
+    pendingInsertion.resolve();
+  }
 
   private readonly handleDoubleClick = (event: MouseEvent): void => {
     if (!this.enabled) return;
@@ -534,6 +1083,10 @@ export class HorizontalPanesController {
   };
 
   private readonly handleWindowBlur = (): void => {
+    this.pendingReferencePointer = null;
+    this.pendingBlockPointer = null;
+    this.clearSuppressedReferenceClick();
+    this.clearSuppressedBlockClick();
     this.finishPaneResize();
     this.setResizeTarget(null);
   };

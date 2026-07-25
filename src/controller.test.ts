@@ -9,6 +9,12 @@ const options = {
   paneGapPx: 18,
   mainPaneGapPx: 32,
   scrollSnap: false,
+  openPaneLinks: false,
+};
+
+const navigationOptions = {
+  ...options,
+  openPaneLinks: true,
 };
 
 function setLeft(element: HTMLElement, left: number, width = 680): void {
@@ -69,6 +75,78 @@ async function flushEditorFrames(): Promise<void> {
   }
 }
 
+function createBlockPane(blockId: string, childBlockId?: string): HTMLElement {
+  const pane = document.createElement('div');
+  pane.className = 'sidebar-item item-type-block';
+  pane.innerHTML = `
+    <div class="sidebar-item-header">
+      <span class="pane-title">${blockId}</span>
+      <span class="item-actions"><button class="close">Close</button></span>
+    </div>
+    <div class="blocks-list-wrap">
+      <div class="ls-block" blockid="${blockId}">
+        <div class="block-content">${blockId}</div>
+        ${
+          childBlockId
+            ? `<div class="ls-block" blockid="${childBlockId}">
+                <span class="bullet-container" blockid="${childBlockId}">
+                  <span class="bullet" blockid="${childBlockId}"></span>
+                </span>
+                <div class="block-content">${childBlockId}</div>
+              </div>`
+            : ''
+        }
+      </div>
+    </div>
+  `;
+  pane.querySelector('.close')?.addEventListener('click', () => pane.remove());
+  return pane;
+}
+
+function createPagePane(pageName: string): HTMLElement {
+  const pane = document.createElement('div');
+  pane.className = 'sidebar-item item-type-page';
+  pane.innerHTML = `
+    <div class="sidebar-item-header">
+      <button aria-controls="page-content">${pageName}</button>
+      <span class="item-actions"><button class="close">Close</button></span>
+    </div>
+    <div class="blocks-list-wrap">
+      <div class="ls-block" blockid="${pageName}-first-block"></div>
+    </div>
+  `;
+  pane.querySelector('.close')?.addEventListener('click', () => pane.remove());
+  return pane;
+}
+
+function dispatchPointer(
+  target: Element,
+  type: 'pointerdown' | 'pointermove' | 'pointerup',
+  {
+    pointerId = 1,
+    shiftKey = false,
+    clientX = 100,
+    clientY = 100,
+  }: {
+    pointerId?: number;
+    shiftKey?: boolean;
+    clientX?: number;
+    clientY?: number;
+  } = {}
+): MouseEvent {
+  const event = new MouseEvent(type, {
+    bubbles: true,
+    cancelable: true,
+    button: 0,
+    shiftKey,
+    clientX,
+    clientY,
+  });
+  Object.defineProperty(event, 'pointerId', { value: pointerId });
+  target.dispatchEvent(event);
+  return event;
+}
+
 describe('HorizontalPanesController', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -120,6 +198,141 @@ describe('HorizontalPanesController', () => {
     expect(newestPane.classList.contains('horizontal-panes-active-pane')).toBe(true);
     expect(scrollTo).toHaveBeenLastCalledWith({ left: 1240, behavior: 'smooth' });
     expect(list.children[0]).toBe(newestPane);
+    controller.destroy();
+  });
+
+  it('keeps visual pane order when Logseq removes and re-adds the same pane node', async () => {
+    const { list } = installFixture();
+    const rightPane = createBlockPane('right');
+    const leftPane = createBlockPane('left');
+    list.append(rightPane, leftPane);
+
+    const controller = new HorizontalPanesController(options);
+    controller.setEnabled(true);
+
+    list.removeChild(leftPane);
+    list.append(leftPane);
+    await flushMutationAndFrames();
+
+    expect(leftPane.style.order).toBe('0');
+    expect(rightPane.style.order).toBe('1');
+    controller.destroy();
+  });
+
+  it('reuses an already-open block pane when a shaky plain-click replaces its source', async () => {
+    const { list } = installFixture();
+    const paneD = createBlockPane('D');
+    const paneC = createBlockPane('C');
+    const paneB = createBlockPane('B', 'D');
+    const paneA = createBlockPane('A');
+    list.append(paneD, paneC, paneB, paneA);
+    const openPaneReference = vi.fn(async () => undefined);
+
+    const controller = new HorizontalPanesController(navigationOptions, {
+      openPaneReference,
+    });
+    controller.setEnabled(true);
+
+    const childBullet = paneB.querySelector<HTMLElement>('.bullet')!;
+    dispatchPointer(childBullet, 'pointerdown', { clientX: 100 });
+    dispatchPointer(childBullet, 'pointermove', { clientX: 108 });
+    dispatchPointer(childBullet, 'pointerup', { clientX: 108 });
+    await flushMutationAndFrames();
+
+    expect(openPaneReference).not.toHaveBeenCalled();
+    expect(paneB.isConnected).toBe(false);
+    expect(paneA.style.order).toBe('0');
+    expect(paneD.style.order).toBe('1');
+    expect(paneC.style.order).toBe('2');
+    expect(paneD.classList.contains('horizontal-panes-active-pane')).toBe(true);
+    controller.destroy();
+  });
+
+  it('moves an already-open block pane immediately after its source on Shift-click', async () => {
+    const { list } = installFixture();
+    const paneD = createBlockPane('D');
+    const paneC = createBlockPane('C');
+    const paneB = createBlockPane('B', 'D');
+    const paneA = createBlockPane('A');
+    list.append(paneD, paneC, paneB, paneA);
+    const openPaneReference = vi.fn(async () => undefined);
+
+    const controller = new HorizontalPanesController(navigationOptions, {
+      openPaneReference,
+    });
+    controller.setEnabled(true);
+
+    const childBullet = paneB.querySelector<HTMLElement>('.bullet')!;
+    dispatchPointer(childBullet, 'pointerdown', { shiftKey: true });
+    dispatchPointer(childBullet, 'pointerup', { shiftKey: true });
+    await flushMutationAndFrames();
+
+    expect(openPaneReference).not.toHaveBeenCalled();
+    expect(paneB.isConnected).toBe(true);
+    expect(paneA.style.order).toBe('0');
+    expect(paneB.style.order).toBe('1');
+    expect(paneD.style.order).toBe('2');
+    expect(paneC.style.order).toBe('3');
+    controller.destroy();
+  });
+
+  it('inserts a genuinely new block pane immediately after its source on Shift-click', async () => {
+    const { list } = installFixture();
+    const paneC = createBlockPane('C');
+    const paneB = createBlockPane('B', 'D');
+    const paneA = createBlockPane('A');
+    list.append(paneC, paneB, paneA);
+    const paneD = createBlockPane('D');
+    const openPaneReference = vi.fn(async () => {
+      list.prepend(paneD);
+    });
+
+    const controller = new HorizontalPanesController(navigationOptions, {
+      openPaneReference,
+    });
+    controller.setEnabled(true);
+
+    const childBullet = paneB.querySelector<HTMLElement>('.bullet')!;
+    dispatchPointer(childBullet, 'pointerdown', { shiftKey: true });
+    dispatchPointer(childBullet, 'pointerup', { shiftKey: true });
+    await flushMutationAndFrames();
+
+    expect(openPaneReference).toHaveBeenCalledWith('D');
+    expect(paneA.style.order).toBe('0');
+    expect(paneB.style.order).toBe('1');
+    expect(paneD.style.order).toBe('2');
+    expect(paneC.style.order).toBe('3');
+    controller.destroy();
+  });
+
+  it('reuses an already-open page pane by its native page header', async () => {
+    const { list } = installFixture();
+    const targetPane = createPagePane('Target Page');
+    const sourcePane = createBlockPane('Source');
+    sourcePane.querySelector('.block-content')!.innerHTML = `
+      <span class="page-reference" data-ref="Target Page">
+        <a class="page-ref" data-ref="Target Page">Target Page</a>
+      </span>
+    `;
+    list.append(targetPane, sourcePane);
+    const resolvePaneReference = vi.fn(async () => 'target-page-uuid');
+    const openPaneReference = vi.fn(async () => undefined);
+
+    const controller = new HorizontalPanesController(navigationOptions, {
+      resolvePaneReference,
+      openPaneReference,
+    });
+    controller.setEnabled(true);
+
+    const pageReference = sourcePane.querySelector<HTMLElement>('.page-ref')!;
+    dispatchPointer(pageReference, 'pointerdown');
+    dispatchPointer(pageReference, 'pointerup');
+    await flushMutationAndFrames();
+
+    expect(resolvePaneReference).toHaveBeenCalledWith('Target Page');
+    expect(openPaneReference).not.toHaveBeenCalled();
+    expect(sourcePane.isConnected).toBe(false);
+    expect(targetPane.style.order).toBe('0');
     controller.destroy();
   });
 
