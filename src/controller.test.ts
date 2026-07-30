@@ -103,7 +103,7 @@ function createBlockPane(blockId: string, childBlockId?: string): HTMLElement {
   return pane;
 }
 
-function createPagePane(pageName: string): HTMLElement {
+function createPagePane(pageName: string, pageUuid = `${pageName}-uuid`): HTMLElement {
   const pane = document.createElement('div');
   pane.className = 'sidebar-item item-type-page';
   pane.innerHTML = `
@@ -112,6 +112,9 @@ function createPagePane(pageName: string): HTMLElement {
       <span class="item-actions"><button class="close">Close</button></span>
     </div>
     <div class="blocks-list-wrap">
+      <div class="page-blocks-inner">
+        <div><div id="${pageUuid}"></div></div>
+      </div>
       <div class="ls-block" blockid="${pageName}-first-block"></div>
     </div>
   `;
@@ -864,7 +867,7 @@ describe('HorizontalPanesController', () => {
 
   it('returns from a block to an initial page target in the same pane slot', async () => {
     const { list } = installFixture();
-    const pagePane = createPagePane('Page A');
+    const pagePane = createPagePane('Page A', 'page-a-uuid');
     pagePane.querySelector('.ls-block')!.innerHTML = `
       <div class="block-content">
         <span class="page-reference" data-ref="Target B">
@@ -879,7 +882,7 @@ describe('HorizontalPanesController', () => {
     const openPaneReference = vi.fn(async (target: string | number) => {
       list.prepend(
         String(target) === 'page-a-uuid'
-          ? createPagePane('Page A')
+          ? createPagePane('Page A', 'page-a-uuid')
           : createBlockPane(String(target))
       );
     });
@@ -916,7 +919,6 @@ describe('HorizontalPanesController', () => {
     ]);
     expect(resolvePaneReference.mock.calls.map(([reference]) => reference)).toEqual([
       'Target B',
-      'Page A',
     ]);
     expect(restoredPage.style.order).toBe('0');
     expect(
@@ -924,6 +926,67 @@ describe('HorizontalPanesController', () => {
         'button[data-horizontal-panes-history="forward"]'
       )?.disabled
     ).toBe(false);
+    controller.destroy();
+  });
+
+  it('returns to a renamed page through its stable UUID', async () => {
+    const { list } = installFixture();
+    const pagePane = createPagePane(
+      'Original title',
+      '11111111-1111-4111-8111-111111111111'
+    );
+    pagePane.querySelector('.ls-block')!.innerHTML = `
+      <div class="block-content">
+        <span class="page-reference" data-ref="Target B">
+          <a class="page-ref" data-ref="Target B">Target B</a>
+        </span>
+      </div>
+    `;
+    list.append(pagePane);
+    const resolvePaneReference = vi.fn(async (reference: string) =>
+      reference === 'Target B' ? 'B' : null
+    );
+    const openPaneReference = vi.fn(async (target: string | number) => {
+      list.prepend(
+        String(target) === '11111111-1111-4111-8111-111111111111'
+          ? createPagePane(
+              'Renamed title',
+              '11111111-1111-4111-8111-111111111111'
+            )
+          : createBlockPane(String(target))
+      );
+    });
+
+    const controller = new HorizontalPanesController(navigationOptions, {
+      resolvePaneReference,
+      openPaneReference,
+    });
+    controller.setEnabled(true);
+
+    const pageReference = pagePane.querySelector<HTMLElement>('.page-ref')!;
+    dispatchPointer(pageReference, 'pointerdown');
+    dispatchPointer(pageReference, 'pointerup');
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+
+    list
+      .querySelector<HTMLElement>('.sidebar-item.item-type-block')
+      ?.querySelector<HTMLButtonElement>(
+        'button[data-horizontal-panes-history="back"]'
+      )
+      ?.click();
+    await flushMutationAndFrames();
+    await flushMutationAndFrames();
+
+    expect(openPaneReference.mock.calls.map(([target]) => target)).toEqual([
+      'B',
+      '11111111-1111-4111-8111-111111111111',
+    ]);
+    expect(resolvePaneReference).toHaveBeenCalledTimes(1);
+    expect(
+      list.querySelector('.sidebar-item.item-type-page .sidebar-item-header')
+        ?.textContent
+    ).toContain('Renamed title');
     controller.destroy();
   });
 

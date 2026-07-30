@@ -736,6 +736,9 @@ export class HorizontalPanesController {
 
   private getPaneHistoryEntry(pane: HTMLElement): PaneHistoryEntry | null {
     if (pane.classList.contains('item-type-page')) {
+      const pageId = this.getPanePageId(pane);
+      if (pageId) return { target: pageId };
+
       const header = pane.querySelector<HTMLElement>('.sidebar-item-header');
       const pageTitle =
         header?.querySelector<HTMLElement>('button[aria-controls]')?.textContent?.trim() ??
@@ -1334,6 +1337,11 @@ export class HorizontalPanesController {
 
     return (
       this.getPanes().find((pane) => {
+        const pageId = this.getPanePageId(pane);
+        if (pageId && this.normalizeTargetKey(pageId) === targetKey) {
+          return true;
+        }
+
         const rootBlock = pane.querySelector<HTMLElement>(BLOCK_SELECTOR);
         const rootBlockId = rootBlock ? this.getBlockId(rootBlock) : null;
         if (
@@ -1356,6 +1364,16 @@ export class HorizontalPanesController {
           '';
         return this.normalizeTargetKey(pageTitle) === referenceKey;
       }) ?? null
+    );
+  }
+
+  private getPanePageId(pane: HTMLElement): string | null {
+    if (!pane.classList.contains('item-type-page')) return null;
+
+    return (
+      pane
+        .querySelector<HTMLElement>('.page-blocks-inner > div > [id]')
+        ?.id.trim() || null
     );
   }
 

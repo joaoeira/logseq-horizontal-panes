@@ -561,6 +561,8 @@
     }
     getPaneHistoryEntry(pane) {
       if (pane.classList.contains("item-type-page")) {
+        const pageId = this.getPanePageId(pane);
+        if (pageId) return { target: pageId };
         const header = pane.querySelector(".sidebar-item-header");
         const pageTitle = header?.querySelector("button[aria-controls]")?.textContent?.trim() ?? "";
         return pageTitle ? { target: pageTitle, reference: pageTitle } : null;
@@ -973,6 +975,10 @@
       const targetKey = this.normalizeTargetKey(target);
       const referenceKey = reference ? this.normalizeTargetKey(reference) : null;
       return this.getPanes().find((pane) => {
+        const pageId = this.getPanePageId(pane);
+        if (pageId && this.normalizeTargetKey(pageId) === targetKey) {
+          return true;
+        }
         const rootBlock = pane.querySelector(BLOCK_SELECTOR);
         const rootBlockId = rootBlock ? this.getBlockId(rootBlock) : null;
         if (rootBlockId && (this.normalizeTargetKey(rootBlockId) === targetKey || referenceKey !== null && this.normalizeTargetKey(rootBlockId) === referenceKey)) {
@@ -985,6 +991,10 @@
         const pageTitle = header?.querySelector("button[aria-controls]")?.textContent ?? header?.textContent ?? "";
         return this.normalizeTargetKey(pageTitle) === referenceKey;
       }) ?? null;
+    }
+    getPanePageId(pane) {
+      if (!pane.classList.contains("item-type-page")) return null;
+      return pane.querySelector(".page-blocks-inner > div > [id]")?.id.trim() || null;
     }
     normalizeTargetKey(target) {
       return String(target).trim().toLocaleLowerCase();
